@@ -1,0 +1,9 @@
+{
+  "name": "rixse-site",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./public", "not_found_handling": "404-page" },
+  "routes": [
+    { "pattern": "rixse.dev", "custom_domain": true },
+    { "pattern": "www.rixse.dev", "custom_domain": true }
+  ]
+}

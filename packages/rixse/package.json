@@ -1,0 +1,11 @@
+{
+  "name": "rixse",
+  "version": "0.0.0",
+  "description": "Agentic UI: ui = view(state), and the agent writes state. Placeholder — the library is in early development.",
+  "homepage": "https://rixse.dev",
+  "repository": { "type": "git", "url": "git+https://github.com/rixsedev/rixse.git" },
+  "license": "MIT",
+  "keywords": ["agentic-ui", "ui", "agent", "state"],
+  "files": ["index.js", "README.md"],
+  "main": "index.js"
+}

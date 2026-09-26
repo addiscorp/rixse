@@ -1,0 +1,5 @@
+{
+  "name": "rixse-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
