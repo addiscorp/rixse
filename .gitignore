@@ -2,3 +2,5 @@
 node_modules/
 .wrangler/
 *.tgz
+.next/
+.open-next/
