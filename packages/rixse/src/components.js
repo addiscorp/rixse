@@ -40,6 +40,7 @@ export function defineComponent(kind, def) {
   for (const s of def.sizes) if (!SIZES.includes(s)) throw new Error(`component "${kind}": unknown size "${s}"`);
   const size = def.size ?? def.sizes[0];
   if (!def.sizes.includes(size)) throw new Error(`component "${kind}": default size "${size}" is not one of its sizes`);
+  if (def.holds !== undefined && def.holds !== 'grid' && def.holds !== 'tabs') throw new Error(`component "${kind}": holds must be "grid" or "tabs"`);
   return { ...def, kind, size, params: def.params ?? {} };
 }
 
@@ -73,13 +74,22 @@ const SPAN = { small: [1, 1], medium: [2, 1], large: [2, 2] };
 /**
  * Lay out a viewport's items for a container width. Pure: the same state and
  * width always give the same cells, on every platform.
+ * A container component lays out its own children the same way, for its own
+ * width; a tabs container shows only its active child, across the full width.
  * @param {ViewportState} state @param {number} width
  * @param {{ min: number, cols: number }[]} [bands] container widths → column count
+ * @param {string} [container] lay out this container's children instead of the page
  * @returns {{ cols: number, cells: { id: string, cols: number, rows: number }[] }}
  */
-export function layout(state, width, bands = [{ min: 0, cols: 2 }, { min: 720, cols: 4 }, { min: 1280, cols: 6 }]) {
+export function layout(state, width, bands = [{ min: 0, cols: 2 }, { min: 720, cols: 4 }, { min: 1280, cols: 6 }], container) {
   const cols = [...bands].sort((a, b) => a.min - b.min).filter((b) => width >= b.min).at(-1)?.cols ?? 1;
-  const cells = state.order.map((id) => {
+  const box = container ? state.items[container] : undefined;
+  const list = box ? /** @type {string[]} */ (box.children ?? []) : state.order;
+  if (box?.active !== undefined) {
+    const shown = list.includes(box.active) ? box.active : list[0];
+    return { cols, cells: shown ? [{ id: shown, cols, rows: 0 }] : [] };
+  }
+  const cells = list.map((id) => {
     const size = state.items[id].size;
     if (size === 'viewport') return { id, cols, rows: 0 };
     const [c, r] = SPAN[size];
@@ -104,6 +114,39 @@ export function createViewport({ components, sources }) {
 
   /** @returns {ViewportState} */
   const initial = () => ({ items: {}, order: [], selection: null });
+
+  // Nesting (APS 4): a component whose definition `holds` components keeps its
+  // children's order; a tabs container also keeps which child is showing. It
+  // switches on only when the catalogue has such a component, so apps without
+  // containers keep exactly the same actions and state.
+  const nesting = components.some((c) => c.holds);
+  /** @param {ViewportState} s @param {string | undefined} parent */
+  const listOf = (s, parent) => (parent ? /** @type {string[]} */ (s.items[parent].children) : s.order);
+  /** @param {ViewportState} s @param {string} id */
+  const parentOf = (s, id) => Object.values(s.items).find((o) => /** @type {string[] | undefined} */ (o.children)?.includes(id))?.id;
+  /** @param {ViewportState} s @param {string} id @returns {string[]} */
+  const descendants = (s, id) => (/** @type {string[] | undefined} */ (s.items[id]?.children) ?? []).flatMap((c) => [c, ...descendants(s, c)]);
+  /** Write a list back: the page's order, or a container's children. @param {Record<string, Item>} items @param {string[]} order */
+  const writeList = (items, order, parent, list) => (parent ? { items: { ...items, [parent]: { ...items[parent], children: list } }, order } : { items, order: list });
+  /** Check a destination container. @param {ViewportState} s @param {string} id @param {string} into */
+  function checkInto(s, id, into) {
+    const box = s.items[into];
+    if (!box) throw new Rejected(`no component "${into}" to put it in`);
+    if (!byKind.get(box.kind)?.holds) throw new Rejected(`${box.kind} "${into}" does not hold components; containers are ${components.filter((c) => c.holds).map((c) => c.kind).join(', ')}`);
+    if (into === id || descendants(s, id).includes(into)) throw new Rejected('a component cannot go inside itself');
+  }
+  /** Take ids out of whichever lists hold them. */
+  function detach(/** @type {ViewportState} */ s, /** @type {Record<string, Item>} */ items, /** @type {string[]} */ ids) {
+    let order = s.order.filter((x) => !ids.includes(x));
+    for (const [k, v] of Object.entries(items)) {
+      const kids = /** @type {string[] | undefined} */ (v.children);
+      if (kids && kids.some((x) => ids.includes(x))) {
+        const next = kids.filter((x) => !ids.includes(x));
+        items[k] = { ...v, children: next, ...(v.active !== undefined && ids.includes(/** @type {string} */ (v.active)) ? { active: next[0] ?? null } : {}) };
+      }
+    }
+    return order;
+  }
 
   /** @param {string} kind @param {string} size */
   const sizeError = (kind, size) => {
@@ -143,6 +186,7 @@ export function createViewport({ components, sources }) {
         size: { type: 'enum', values: [...SIZES], optional: true, describe: 'one of the sizes the kind comes in; default is its usual size' },
         ...allParams,
         ...PLACE_PARAMS,
+        ...(nesting ? { in: { type: 'string', ref: 'view', optional: true, describe: 'the container (a component that holds others) to put it in; default the page; reusing an id with another "in" moves it' } } : {}),
       },
       apply: (/** @type {ViewportState} */ s, /** @type {any} */ p) => {
         const c = /** @type {Component} */ (byKind.get(p.kind));
@@ -158,6 +202,8 @@ export function createViewport({ components, sources }) {
         /** @type {Item} */
         const item = { id: p.id, kind: c.kind, title: p.title, size, query: p.query ?? '' };
         for (const [n, def] of Object.entries(c.params)) item[n] = p[n] ?? def.default;
+        if (c.holds) item.children = prev?.children ?? [];
+        if (c.holds === 'tabs') item.active = prev?.active ?? null;
         // Ensure (APS 2): one component per identity. Showing it again is a
         // pointer to the one on screen, never a duplicate.
         if (c.identity) {
@@ -168,20 +214,46 @@ export function createViewport({ components, sources }) {
         if (c.source && !rows.length) throw new Rejected('the query ran but returned no rows; loosen the filter or check the names');
         const why = c.check?.(rows, item);
         if (why) throw new Rejected(why);
-        const placed = p.at ? place(s.order, p.id, p.at, p.target) : { order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
+        if (!nesting) {
+          const placed = p.at ? place(s.order, p.id, p.at, p.target) : { order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
+          const items = { ...s.items, [p.id]: item };
+          if ('removed' in placed && placed.removed) delete items[placed.removed];
+          // A changed or removed component drops its selection: the items may no longer be on screen.
+          const selection = s.selection && items[s.selection.view] && s.selection.view !== p.id ? s.selection : null;
+          return { items, order: placed.order, selection };
+        }
+        const from = prev ? parentOf(s, p.id) : undefined;
+        const into = p.in ?? from;
+        if (p.in) checkInto(s, p.id, p.in);
+        if (p.at && p.at !== 'end' && p.target && !listOf(s, into).includes(p.target)) throw new Rejected(`"${p.target}" is not ${into ? `inside "${into}"` : 'on the page'}; place relative to a sibling`);
         const items = { ...s.items, [p.id]: item };
-        if ('removed' in placed && placed.removed) delete items[placed.removed];
-        // A changed or removed component drops its selection: the items may no longer be on screen.
-        const selection = s.selection && items[s.selection.view] && s.selection.view !== p.id ? s.selection : null;
-        return { items, order: placed.order, selection };
+        let order = s.order;
+        if (prev && from !== into) order = detach(s, items, [p.id]);
+        const base = into ? /** @type {string[]} */ (items[into].children) : order;
+        const placed = p.at ? place(base, p.id, p.at, p.target) : { order: base.includes(p.id) ? base : [...base, p.id] };
+        let gone = /** @type {string[]} */ ([]);
+        if ('removed' in placed && placed.removed) { gone = [placed.removed, ...descendants(s, placed.removed)]; for (const g of gone) delete items[g]; }
+        const out = writeList(items, order, into, placed.order);
+        // Showing into a tabs container brings that tab to the front (navigation is state, APS 2).
+        if (into && out.items[into].active !== undefined) out.items[into] = { ...out.items[into], active: p.id };
+        const selection = s.selection && out.items[s.selection.view] && s.selection.view !== p.id ? s.selection : null;
+        return { items: out.items, order: out.order, selection };
       },
     }),
     defineAction('view.move', {
       describe: 'Move a component to the end, or before/after another.',
-      params: { id: { type: 'string', ref: 'view' }, at: { type: 'enum', values: ['end', 'before', 'after'] }, target: { type: 'string', ref: 'view', optional: true } },
+      params: { id: { type: 'string', ref: 'view' }, at: { type: 'enum', values: ['end', 'before', 'after'] }, target: { type: 'string', ref: 'view', optional: true },
+        ...(nesting ? { in: { type: 'string', ref: 'view', optional: true, describe: 'move it into this container (default: where it is now)' } } : {}) },
       apply: (/** @type {ViewportState} */ s, /** @type {any} */ p) => {
         if (!s.items[p.id]) throw new Rejected(`no component "${p.id}"`);
-        return { ...s, order: place(s.order, p.id, p.at, p.target).order };
+        if (!nesting) return { ...s, order: place(s.order, p.id, p.at, p.target).order };
+        const from = parentOf(s, p.id), into = p.in ?? from;
+        if (p.in) checkInto(s, p.id, p.in);
+        const items = { ...s.items };
+        const order = from !== into ? detach(s, items, [p.id]) : s.order;
+        const base = into ? /** @type {string[]} */ (items[into].children) : order;
+        const out = writeList(items, order, into, place(base, p.id, p.at, p.target).order);
+        return { ...s, items: out.items, order: out.order };
       },
     }),
     defineAction('view.resize', {
@@ -200,8 +272,16 @@ export function createViewport({ components, sources }) {
       params: { id: { type: 'string', ref: 'view' } },
       apply: (/** @type {ViewportState} */ s, /** @type {any} */ p) => {
         if (!s.items[p.id]) throw new Rejected(`no component "${p.id}"`);
-        const { [p.id]: _gone, ...items } = s.items;
-        return { items, order: s.order.filter((x) => x !== p.id), selection: s.selection?.view === p.id ? null : s.selection };
+        if (!nesting) {
+          const { [p.id]: _gone, ...items } = s.items;
+          return { items, order: s.order.filter((x) => x !== p.id), selection: s.selection?.view === p.id ? null : s.selection };
+        }
+        // A container goes with everything inside it.
+        const gone = [p.id, ...descendants(s, p.id)];
+        const items = { ...s.items };
+        const order = detach(s, items, [p.id]);
+        for (const g of gone) delete items[g];
+        return { items, order, selection: s.selection && gone.includes(s.selection.view) ? null : s.selection };
       },
     }),
     defineAction('view.clear', { describe: 'Remove every component.', params: {}, apply: initial }),
@@ -216,6 +296,16 @@ export function createViewport({ components, sources }) {
       },
     }),
     defineAction('select.clear', { describe: 'Clear the selection.', params: {}, apply: (/** @type {ViewportState} */ s) => ({ ...s, selection: null }) }),
+    ...(components.some((c) => c.holds === 'tabs') ? [defineAction('view.focus', {
+      describe: 'Bring a tab to the front: the component inside a tabs container to show.',
+      params: { id: { type: 'string', ref: 'view' } },
+      apply: (/** @type {ViewportState} */ s, /** @type {any} */ p) => {
+        if (!s.items[p.id]) throw new Rejected(`no component "${p.id}"`);
+        const parent = parentOf(s, p.id);
+        if (!parent || s.items[parent].active === undefined) throw new Rejected(`"${p.id}" is not a tab; only components inside a tabs container can be focused`);
+        return { ...s, items: { ...s.items, [parent]: { ...s.items[parent], active: p.id } } };
+      },
+    })] : []),
   ];
 
   /** The component catalogue, written for a model. Generated: adding a component adds its words. */
@@ -226,7 +316,7 @@ export function createViewport({ components, sources }) {
         return `${n}${p.optional || p.default !== undefined ? '?' : ''}: ${t}${p.default !== undefined && p.default !== '' ? ` = ${JSON.stringify(p.default)}` : ''}${p.describe ? ` (${p.describe})` : ''}`;
       });
       const sizes = c.sizes.map((s) => (s === c.size ? `${s}*` : s)).join('|');
-      return `- ${c.kind} [${sizes}]${c.source ? ` reads ${c.source}` : ''}: ${c.describe}${params.length ? `\n    params: ${params.join('; ')}` : ''}${c.select ? `\n    select: ${c.select}` : ''}`;
+      return `- ${c.kind} [${sizes}]${c.source ? ` reads ${c.source}` : ''}${c.holds ? ` holds components${c.holds === 'tabs' ? ' as tabs' : ''} (put them in with "in")` : ''}: ${c.describe}${params.length ? `\n    params: ${params.join('; ')}` : ''}${c.select ? `\n    select: ${c.select}` : ''}`;
     });
     const srcs = Object.entries(sources).map(([n, s]) => `## Source "${n}"\n${typeof s.describe === 'function' ? s.describe() : s.describe}`);
     return [

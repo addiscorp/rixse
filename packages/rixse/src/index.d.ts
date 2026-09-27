@@ -55,13 +55,15 @@ export type ComponentDef = {
   check?: (rows: any[], item: any) => string | null;
   /** what a selection in it names, for the agent */
   select?: string;
+  /** a container: holds other components as a grid or as tabs (APS 4) */
+  holds?: 'grid' | 'tabs';
 };
 export type ComponentSpec = ComponentDef & { kind: string; size: Size; params: Record<string, ComponentParam> };
 export type SourceDef = { describe: string | (() => string); /** one line: the query language and its shape, shown on the query param */ query?: string; run: (query: string) => any[]; hint?: (error: string) => string };
 export function defineComponent(kind: string, def: ComponentDef): ComponentSpec;
 export function defineSource(def: SourceDef): SourceDef;
 export function place(order: string[], id: string, at?: Place, target?: string): { order: string[]; removed?: string };
-export function layout(state: ViewportState<any>, width: number, bands?: { min: number; cols: number }[]): { cols: number; cells: { id: string; cols: number; rows: number }[] };
+export function layout(state: ViewportState<any>, width: number, bands?: { min: number; cols: number }[], container?: string): { cols: number; cells: { id: string; cols: number; rows: number }[] };
 export function createViewport<I extends Item = Item>(options: { components: ComponentSpec[]; sources: Record<string, SourceDef> }): {
   initial(): ViewportState<I>;
   actions: ActionDef<ViewportState<I>, any>[];
