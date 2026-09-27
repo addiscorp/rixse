@@ -129,12 +129,12 @@ const edgeKey = (a: string, b: string) => `${a} > ${b}`;
 
 // Layout physics, ported from zega's explorer graph (zegadb/zega browser/graph.js):
 // same defaults, ranges and charge scaling. Remembered per viewer.
-type Phys = { repulsion: number; linkDist: number; pad: number; gravity: number };
-const PHYS_DEFAULTS: Phys = { repulsion: 100, linkDist: 105, pad: 10, gravity: 0 };
+type Phys = { repulsion: number; linkDist: number; pad: number; gravity: number; /** how many hops around a selected node stay lit */ hops: number };
+const PHYS_DEFAULTS: Phys = { repulsion: 100, linkDist: 105, pad: 10, gravity: 0, hops: 1 };
 const PHYS_KEY = 'rixse.demo.graph.physics';
 const loadPhys = (): Phys => { try { return { ...PHYS_DEFAULTS, ...JSON.parse(localStorage.getItem(PHYS_KEY) || '{}') }; } catch { return { ...PHYS_DEFAULTS }; } };
 const savePhys = (p: Phys) => { try { localStorage.setItem(PHYS_KEY, JSON.stringify(p)); } catch { /* private mode */ } };
-const PHYS_ROWS: { key: keyof Phys; label: string; min: number; max: number; step: number; unit: string }[] = [
+const PHYS_ROWS: { key: Exclude<keyof Phys, 'hops'>; label: string; min: number; max: number; step: number; unit: string }[] = [
   { key: 'repulsion', label: 'Repulsion', min: 25, max: 300, step: 5, unit: '%' },
   { key: 'linkDist', label: 'Link distance', min: 40, max: 300, step: 5, unit: '' },
   { key: 'pad', label: 'Node padding', min: 0, max: 40, step: 1, unit: '' },
@@ -217,8 +217,10 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     (s.force('y') as ReturnType<typeof forceY>).strength(phys.gravity / 100);
     if (s.alpha() < 0.2) s.alpha(0.25);
     s.restart();
-    savePhys(phys);
-  }, [phys, nodes.length]);
+    // Only the physics fields move the layout; the highlight depth does not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phys.repulsion, phys.linkDist, phys.pad, phys.gravity, nodes.length]);
+  useEffect(() => { savePhys(phys); }, [phys]);
 
   // Buoyancy: one animation loop draws every frame (the layout plus zega's drift).
   useEffect(() => {
@@ -248,7 +250,18 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
   }, [L]);
   // Only node selections fade the rest (zega's blur); an edge selection just highlights the edge.
   const selNodes = selected.filter((i) => !i.includes(' > '));
-  const litSet = selNodes.length ? new Set(selNodes.flatMap((id) => [id, ...(neighbours.get(id) ?? [])])) : null;
+  const litSet = useMemo(() => {
+    if (!selNodes.length) return null;
+    // Everything within phys.hops links of a selected node stays lit (0 = only the selection).
+    const seen = new Set(selNodes);
+    let frontier = selNodes;
+    for (let h = 0; h < phys.hops; h++) {
+      const next: string[] = [];
+      for (const id of frontier) for (const nb of neighbours.get(id) ?? []) if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
+      frontier = next;
+    }
+    return seen;
+  }, [selNodes.join('|'), phys.hops, neighbours]);
   const lit = (id: string) => !litSet || litSet.has(id);
 
   const toGraphXY = (e: { clientX: number; clientY: number }) => {
@@ -331,6 +344,16 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
                 <b className="text-right tabular-nums font-medium">{phys[row.key]}{row.unit}</b>
               </label>
             ))}
+            <div className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2 border-t pt-2" role="group" aria-label="Highlight depth">
+              <span className="text-muted-foreground">Highlight depth</span>
+              <span className="inline-flex rounded-md border overflow-hidden justify-self-start">
+                {[0, 1, 2, 3].map((h) => (
+                  <button key={h} type="button" aria-pressed={phys.hops === h} title={h === 0 ? 'only the selected nodes' : `${h} hop${h > 1 ? 's' : ''} around the selection`}
+                    onClick={() => setPhys((p) => ({ ...p, hops: h }))}
+                    className={cn('px-2.5 py-0.5 text-xs', h > 0 && 'border-l', phys.hops === h ? 'bg-foreground text-background' : 'text-foreground')}>{h}</button>
+                ))}
+              </span>
+            </div>
             <button type="button" className="justify-self-end underline text-muted-foreground" onClick={() => setPhys({ ...PHYS_DEFAULTS })}>reset</button>
           </div>
         )}
