@@ -1,6 +1,6 @@
-# Benchmark results — 2026-09-27T00-16-03-375Z
+# Benchmark results — 2026-09-27T01-19-18-784Z
 
-Completed measurements: 460. Proxy model calls in this run: 520. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T00-16-03-375Z.json**.
+Completed measurements: 560. Proxy model calls in this run: 620. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T01-19-18-784Z.json**.
 
 ## Summary by model
 
@@ -54,16 +54,26 @@ Metrics average model-reported API token counts and latency. First-try validity 
 | wire/json | 576.6 | 113.1 | 1716.9 | 100.0% | 100.0% | 0 |
 | wire/wire | 603.6 | 95.0 | 2201.9 | 100.0% | 100.0% | 0 |
 
+### granite (@cf/ibm-granite/granite-4.0-h-micro)
+
+| Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
+|---|---:|---:|---:|---:|---:|---:|
+| markup/json | 798.6 | 42.4 | 1400.0 | 50.0% | 50.0% | 0 |
+| json/json | 472.1 | 44.5 | 1438.2 | 94.7% | 85.0% | 0 |
+| flight/json | 3857.8 | 44.7 | 1608.6 | 29.4% | 25.0% | 0 |
+| wire/json | 413.2 | 45.3 | 1381.4 | 93.3% | 75.0% | 0 |
+| wire/wire | 448.2 | 30.4 | 891.6 | 7.3% | 10.0% | 0 |
+
 ## Input size for the 60-card state
 
 API input tokens for task `sixty-card`, JSON output only. Counts are model-tokenizer-specific. A context overflow is reported as a failed-by-size result.
 
-| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 |
-|---|---:|---:|---:|---:|---:|
-| markup | 5064 | 4789 | 4532 | 5064 | n/a |
-| json | 2482 | 2398 | 2153 | 2483 | 3261 |
-| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a |
-| wire | 1426 | 1397 | 1143 | 1426 | 1588 |
+| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 | granite |
+|---|---:|---:|---:|---:|---:|---:|
+| markup | 5064 | 4789 | 4532 | 5064 | n/a | 4292 |
+| json | 2482 | 2398 | 2153 | 2483 | 3261 | 2036 |
+| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a | 37102 |
+| wire | 1426 | 1397 | 1143 | 1426 | 1588 | 1084 |
 
 ## Token-normalized result
 
@@ -94,10 +104,29 @@ Checker-passing tasks per 1,000 combined input and output tokens, by model and i
 | opus-5.5 | json/json | 1.243 |
 | opus-5.5 | wire/json | 1.450 |
 | opus-5.5 | wire/wire | 1.431 |
+| granite | markup/json | 0.594 |
+| granite | json/json | 1.646 |
+| granite | flight/json | 0.064 |
+| granite | wire/json | 1.636 |
+| granite | wire/wire | 0.209 |
 
 Highest observed rate: **qwen wire/json** (2.034 passes/1k tokens).
 
 ## Five notable failures
+
+### granite · wire/wire · funnel
+
+Checker: fail; rejection: unknown operation canvas.clear
+
+~~~text
+canvas.clear
+card.add { id: "c1", title: "Visit", body: "User visits the website", x: 100, y: 200, tone: "plain" }
+link.add { from: "c1", to: "c2", label: "Visit" }
+card.add { id: "c2", title: "Signup", body: "User creates an account", x: 500, y: 200, tone: "plain" }
+link.add { from: "c2", to: "c3", label: "Signup" }
+card.add { id: "c3", title: "Purchase", body: "User completes a purchase", x: 900, y: 200, tone: "plain" }
+link.add { from: "c3", to: "c1", label: "Purchase" }
+~~~
 
 ### qwen · wire/wire · funnel
 
@@ -137,23 +166,16 @@ I'll arrange the three steps in a column, one below the other.
 + c3 card "Buy" x=10 y=280
 ~~~
 
-### qwen · wire/wire · risky
+### granite · wire/wire · column
 
-Checker: fail; rejection: invalid or existing handle c1
-
-~~~text
-say: Which steps do you consider risky?
-+ c1 tone=warn
-+ c2 tone=warn
-+ c3 tone=warn
-~~~
-
-### qwen · markup/json · column
-
-Checker: fail; rejection: no card "q3-revenue"
+Checker: fail; rejection: unknown operation Here
 
 ~~~text
-{"say":"Repositioning the cards in a column.","actions":[{"type":"card.move","payload":{"id":"q3-revenue","x":10,"y":20}},{"type":"card.move","payload":{"id":"q3-revenue","x":10,"y":100}},{"type":"card.move","payload":{"id":"q3-revenue","x":10,"y":180}}]}
+Here is the canvas with the three steps arranged in a column:
+
+!c1 c1 "Discover" plain 10,20 
+>c2 c2 "Evaluate" plain 300,150 
+>c3 c3 "Buy" plain 600,300
 ~~~
 
 
@@ -189,6 +211,7 @@ Checker: fail; rejection: no card "q3-revenue"
 - gpt-oss: @cf/openai/gpt-oss-120b; temperature 0; Workers AI response usage fields (model tokenizer)
 - gemma-repeat: @cf/google/gemma-4-26b-a4b-it; temperature 0; Workers AI response usage fields (model tokenizer)
 - opus-5.5: claude-opus-5-5; temperature provider default (omitted); Anthropic Messages input_tokens / output_tokens (Anthropic tokenizer)
+- granite: @cf/ibm-granite/granite-4.0-h-micro; temperature 0; Workers AI response usage fields (model tokenizer)
 
 ### Rerun
 

@@ -10,6 +10,8 @@ import { mergeCheckpointRows } from './result-store.mjs';
 const endpoint = 'http://127.0.0.1:8977';
 const opusOnly = process.argv.includes('--opus-only');
 const probeOnly = process.argv.includes('--probe');
+// --only=<model key> runs one model and merges it onto the newest complete run.
+const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7) ?? (opusOnly ? 'opus-5.5' : null);
 await mkdir('bench/results', { recursive: true });
 await mkdir('.tmp', { recursive: true });
 const models = [
@@ -18,6 +20,7 @@ const models = [
   { key: 'gpt-oss', id: '@cf/openai/gpt-oss-120b', provider: 'workers', temperature: 0 },
   { key: 'gemma-repeat', id: '@cf/google/gemma-4-26b-a4b-it', provider: 'workers', temperature: 0 },
   { key: 'opus-5.5', id: 'claude-opus-5-5', provider: 'anthropic', temperature: null },
+  { key: 'granite', id: '@cf/ibm-granite/granite-4.0-h-micro', provider: 'workers', temperature: 0 },
 ];
 const runId = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const outputPath = `bench/results/${runId}.json`;
@@ -121,22 +124,22 @@ if (probeOnly) {
 
 const rows = [];
 let completed = 0;
-const total = opusOnly ? 60 : 460;
+const total = only ? (only === 'opus-5.5' ? 60 : tasks.length * 5) : 460;
 let baseRun = null;
-if (opusOnly) {
+if (only) {
   const files = await readdir('bench/results');
   const entries = await Promise.all(files.filter((name) => name.endsWith('.json')).map(async (filename) => ({ filename, ...JSON.parse(await readFile(`bench/results/${filename}`, 'utf8')) })));
-  baseRun = entries.filter((entry) => entry.complete && entry.rows.some((row) => row.model !== 'opus-5.5')).sort((a, b) => b.filename.localeCompare(a.filename))[0];
+  baseRun = entries.filter((entry) => entry.complete && entry.rows.some((row) => row.model !== only)).sort((a, b) => b.filename.localeCompare(a.filename))[0];
   if (!baseRun) throw new Error('No complete Workers AI run exists');
 }
 await writeFile(outputPath, JSON.stringify({ run_id: runId, complete: false, request_count: 0, proxy_model_calls: 0, models, task_count: tasks.length, formats: inputs, rows: [] }, null, 2) + '\n', { flag: 'wx' });
 async function checkpoint(complete = false) {
   const combined = baseRun ? mergeCheckpointRows(baseRun.rows, rows) : rows;
-  const output = { run_id: runId, complete, request_count: combined.length, proxy_model_calls: baseRun ? baseRun.proxy_model_calls + rows.length : rows.length, models, task_count: tasks.length, formats: inputs, adapter_seam: { name: 'anthropic-messages', enabled: true }, rows: [...combined], ...(baseRun ? { workers_ai_run_id: baseRun.run_id, opus_retry_run_id: runId } : {}) };
+  const output = { run_id: runId, complete, request_count: combined.length, proxy_model_calls: baseRun ? baseRun.proxy_model_calls + rows.length : rows.length, models, task_count: tasks.length, formats: inputs, adapter_seam: { name: 'anthropic-messages', enabled: true }, rows: [...combined], ...(baseRun ? { base_run_id: baseRun.run_id, added_model: only, added_run_id: runId } : {}) };
   await writeFile(outputPath, JSON.stringify(output, null, 2) + '\n');
 }
 
-for (const model of models.filter((item) => !opusOnly || item.key === 'opus-5.5')) {
+for (const model of models.filter((item) => (only ? item.key === only : item.key !== 'granite'))) {
   const selected = model.provider === 'anthropic' ? [['json', 'json'], ['wire', 'json'], ['wire', 'wire']] : inputs.flatMap((format) => [['json', format], ...(format === 'wire' ? [['wire', format]] : [])].map(([output, input]) => [input, output]));
   for (const item of tasks) {
     const { store, initial } = makeTaskState(item);
