@@ -8,7 +8,8 @@ type Turn = { role: 'user' | 'assistant'; content: string; footnote?: string };
 type Timing = { readBody: number; buildPrompt: number; model: number; parse: number; server: number };
 type Proposal = { timing?: Timing; say: string; actions: { type: string; payload?: unknown }[]; ms: number; model: string; usage?: { input: number; output: number }; parseError?: boolean; error?: string };
 type Format = 'wire' | 'json';
-type Model = 'gemma' | 'oss' | 'opus';
+type Model = 'gemma' | 'oss' | 'glm' | 'opus';
+const MODEL_LABEL: Record<Model, string> = { gemma: 'Gemma 4', oss: 'gpt-oss 20B', glm: 'GLM 4.7 Flash', opus: 'Opus 5.5' };
 const fmt = (n: number) => n.toLocaleString('en-US');
 
 export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: Store<S>; wire: Wire<S>; brief: string; describe: (state: S) => string; hint: string; note: (n: Omit<Note, 'at' | 'order'>) => void }) {
@@ -32,7 +33,7 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
     const wireText = wire.encode(store.state);
     const jsonText = JSON.stringify(store.state);
     const context = format === 'wire' ? wireText : jsonText;
-    note({ kind: 'agent', text: `→ ${model === 'opus' ? 'Opus 5.5' : model === 'oss' ? 'gpt-oss 20B' : 'Gemma 4'} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
+    note({ kind: 'agent', text: `→ ${MODEL_LABEL[model]} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
     try {
       const tContext = performance.now();
       const res = await fetch('/api/agent', {
@@ -102,7 +103,7 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
         <h2 className="pane-title">Chat</h2>
         <span className="soft" />
         <div className="seg" role="group" aria-label="Model">
-          {(['gemma', 'oss', 'opus'] as const).map((m) => <button key={m} type="button" aria-pressed={model === m} onClick={() => setModel(m)}>{m === 'gemma' ? 'Gemma 4' : m === 'oss' ? 'gpt-oss 20B' : 'Opus 5.5'}</button>)}
+          {(Object.keys(MODEL_LABEL) as Model[]).map((m) => <button key={m} type="button" aria-pressed={model === m} onClick={() => setModel(m)}>{MODEL_LABEL[m]}</button>)}
         </div>
         <div className="seg" role="group" aria-label="Context format">
           {(['wire', 'json'] as const).map((f) => <button key={f} type="button" aria-pressed={format === f} onClick={() => setFormat(f)}>{f}</button>)}

@@ -8,6 +8,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 const MODELS = {
   gemma: { label: 'Gemma 4 26B', id: '@cf/google/gemma-4-26b-a4b-it' },
   oss: { label: 'gpt-oss 20B (low effort)', id: '@cf/openai/gpt-oss-20b' },
+  glm: { label: 'GLM-4.7 Flash', id: '@cf/zai-org/glm-4.7-flash' },
   opus: { label: 'Opus 5.5', id: 'claude-opus-5-5' },
 } as const;
 type ModelKey = keyof typeof MODELS;
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
   if (typeof body.message !== 'string' || !body.message.trim()) {
     return Response.json({ error: 'empty message' }, { status: 400 });
   }
-  const key: ModelKey = body.model === 'opus' || body.model === 'oss' ? body.model : 'gemma';
+  const key: ModelKey = body.model && body.model in MODELS ? body.model : 'gemma';
   const sys = system(String(body.brief ?? 'You operate an interface on behalf of the user.').slice(0, 4000), String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
   const turns = [...(body.history ?? []).slice(-HISTORY_MAX), { role: 'user' as const, content: body.message.slice(0, 2000) }];
   const tPrompt = performance.now();
@@ -105,11 +106,23 @@ export async function POST(request: Request) {
         }
         if (Array.isArray(o.actions)) for (const a of o.actions) { lines++; send({ kind: 'action', action: a }); } // a model that ignored the line format
       };
+      // Pull out each complete top-level JSON object as soon as its closing brace
+      // arrives, whatever the line breaks: models differ (one per line, pretty-
+      // printed, fenced). Text outside objects (fences, prose) is ignored.
+      let depth = 0, inStr = false, esc = false, objStart = -1;
       const onText = (t: string) => {
         if (!t) return;
         if (!firstText) firstText = performance.now();
-        raw += t; buf += t;
-        let i; while ((i = buf.indexOf('\n')) >= 0) { line(buf.slice(0, i)); buf = buf.slice(i + 1); }
+        raw += t;
+        for (let k = 0; k < t.length; k++) {
+          const c = t[k]!;
+          buf += c;
+          if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+          if (c === '"') { if (depth > 0) inStr = true; continue; }
+          if (c === '{') { if (depth === 0) objStart = buf.length - 1; depth++; }
+          else if (c === '}' && depth > 0 && --depth === 0) { line(buf.slice(objStart)); buf = ''; objStart = -1; }
+          else if (depth === 0 && c === '\n') buf = '';
+        }
       };
       /** Server-sent events → one parsed JSON payload per data line. */
       const sse = async (body: ReadableStream<Uint8Array>, each: (e: any) => void) => {
@@ -151,7 +164,6 @@ export async function POST(request: Request) {
             }
           });
         }
-        line(buf);
         if (!lines) {
           // Neither lines nor a proposal: fall back to the first JSON object, else show the text.
           const parsed = firstJsonObject(raw) as { say?: unknown; actions?: unknown } | null;
