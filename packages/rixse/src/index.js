@@ -16,6 +16,7 @@
  */
 
 export { createWire } from './wire.js';
+export { SIZES, PLACES, defineComponent, defineSource, place, layout, createViewport } from './components.js';
 
 /** A rejection with a reason the log (and the agent) can read. Throw it from `apply`. */
 export class Rejected extends Error {}

@@ -42,7 +42,7 @@ test('placement: end, before, after, replace — decided by the agent, checked b
   assert.deepEqual(place(order, 'n', 'after', 'b').order, ['a', 'b', 'n', 'c']);
   assert.deepEqual(place(order, 'n', 'replace', 'b'), { order: ['a', 'n', 'c'], removed: 'b' });
   assert.deepEqual(place(order, 'a', 'after', 'c').order, ['b', 'c', 'a'], 'moving an existing view');
-  assert.throws(() => place(order, 'n', 'replace', 'zz'), /no view "zz"/);
+  assert.throws(() => place(order, 'n', 'replace', 'zz'), /no component "zz"/);
   assert.throws(() => place(order, 'b', 'before', 'b'), /relative to itself/);
   assert.throws(() => place(order, 'n', 'after'), /needs a target/);
 });

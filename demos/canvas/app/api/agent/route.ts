@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'empty message' }, { status: 400 });
   }
   const key: ModelKey = body.model && body.model in MODELS ? body.model : 'gemma';
-  const sys = system(String(body.brief ?? 'You operate an interface on behalf of the user.').slice(0, 4000), String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
+  const sys = system(String(body.brief ?? 'You operate an interface on behalf of the user.').slice(0, 16000), String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
   const turns = [...(body.history ?? []).slice(-HISTORY_MAX), { role: 'user' as const, content: body.message.slice(0, 2000) }];
   const tPrompt = performance.now();
   const model = MODELS[key].label;

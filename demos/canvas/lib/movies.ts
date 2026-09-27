@@ -2,21 +2,19 @@
 // and the page runs the query in zega. The rows never pass through the model.
 // ZQL has no sorting or aggregation, so those live in the view spec (sort,
 // limit, sum/count/avg of a field), applied to zega's rows by the page.
-import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
+import { createStore, createViewport, createWire, defineComponent, defineSource, Rejected, type Size } from 'rixse';
 import { getZega } from './zega.ts';
 
 export const VIEW_KINDS = ['stat', 'bar', 'line', 'pie', 'table', 'graph'] as const;
 export type ViewKind = (typeof VIEW_KINDS)[number];
-export const PLACES = ['end', 'before', 'after', 'replace'] as const;
-export type Place = (typeof PLACES)[number];
+export { place } from 'rixse';
 export const FLAGS = ['none', 'drops', 'rises', 'both'] as const;
-export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: 'half' | 'full'; x: string; flag: (typeof FLAGS)[number]; threshold: number; notes: string };
+export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: Size; x: string; flag: (typeof FLAGS)[number]; threshold: number; notes: string };
 /** What the user (or the agent) has selected in one view: graph nodes "person:Chris Evans", edges "person:Chris Evans > movie:Avatar", or bars "Avatar". */
 export type Selection = { view: string; items: string[] };
-export type MoviesState = { views: Record<string, View>; order: string[]; selection: Selection | null };
+export type MoviesState = { items: Record<string, View>; order: string[]; selection: Selection | null };
 export type Datum = { label: string; value: number };
 
-const initial = (): MoviesState => ({ views: {}, order: [], selection: null });
 
 /** Every value at a dotted path, flattening arrays on the way ("movies.gross"). */
 function at(row: unknown, path: string): unknown[] {
@@ -177,147 +175,104 @@ export function hintFor(error: string, schema: string): string {
   return '';
 }
 
-/** Run a view's query in zega; a zega error becomes a rejection the agent can read and act on. */
-export function runQuery(query: string): unknown[] {
-  const z = getZega();
-  if (!z) throw new Rejected('the movies database is still loading; try again in a moment');
-  try { return z.run(query); }
-  catch (e) {
-    const msg = String(e instanceof Error ? e.message : e).replace(/^execution error: /, '');
-    const first = msg.split('\n').find((l) => /error:/.test(l)) ?? msg.split('\n')[0]!;
-    throw new Rejected(`zega rejected the query: ${first.trim().slice(0, 240)}.${hintFor(msg, z.schema)}`);
-  }
-}
 
-const act = <P,>(type: string, def: Omit<ActionDef<MoviesState, P>, 'type'>) => defineAction<MoviesState, P>(type, def);
-
-/**
- * Where a view goes in the order. The agent decides (end, before/after a view,
- * or replace one); rixse checks the target exists and is not the view itself.
- * Returns the new order and the id a replace removes.
- */
-export function place(order: string[], id: string, at: Place = 'end', target?: string): { order: string[]; removed?: string } {
-  const rest = order.filter((x) => x !== id);
-  if (at === 'end') return { order: [...rest, id] };
-  if (!target) throw new Rejected(`at "${at}" needs a target view`);
-  if (target === id) throw new Rejected('a view cannot be placed relative to itself');
-  const i = rest.indexOf(target);
-  if (i < 0) throw new Rejected(`no view "${target}" to place ${at === 'replace' ? 'over' : at}`);
-  if (at === 'replace') return { order: [...rest.slice(0, i), id, ...rest.slice(i + 1)], removed: target };
-  const j = at === 'before' ? i : i + 1;
-  return { order: [...rest.slice(0, j), id, ...rest.slice(j)] };
-}
-
-const PLACE_PARAMS = {
-  at: { type: 'enum', values: PLACES, optional: true, describe: 'where it goes: "end" (default), "before"/"after" the target, or "replace" the target (the target view is removed; its spot is taken)' },
-  target: { type: 'string', ref: 'view', optional: true, describe: 'the view id (or handle) that "at" refers to' },
-} as const;
-
-export const movieActions = [
-  act('view.show', {
-    describe: 'Show a view of query results, or replace the view with this id. The page runs the query in zega and draws the rows; you never see or write the data.',
-    params: {
-      id: { type: 'string', ref: 'view', describe: 'a short slug; reuse an existing id (or its handle) to change that view instead of adding one' },
-      kind: { type: 'enum', values: VIEW_KINDS, describe: 'stat: ONE number (how much, how many, what year) shown large; bar: compare amounts; pie: shares of a whole; table: detail rows; graph: how movies and people connect' },
-      title: { type: 'string' },
-      query: { type: 'string', describe: 'one ZQL read query' },
-      label: { type: 'string', optional: true, describe: 'bar/pie: field path for each slice/bar name, e.g. "title" or "name"' },
-      value: { type: 'string', optional: true, describe: 'bar/pie: field path or sum|count|avg|max|min(path), e.g. "gross", "sum(movies.gross)", "count(acted_in)"' },
-      sort: { type: 'string', optional: true, describe: '"value desc" (default), "value asc" or "label asc"' },
-      limit: { type: 'number', optional: true, describe: 'keep the first N after sorting' },
-      size: { type: 'enum', values: ['half', 'full'], optional: true, describe: 'half (default) or full width' },
-      x: { type: 'string', optional: true, describe: 'line: the x-axis field path, e.g. "movies.year" (label names each series, value its y)' },
-      flag: { type: 'enum', values: FLAGS, optional: true, describe: 'line: mark the biggest drops/rises; the chart computes the % from the data' },
-      threshold: { type: 'number', optional: true, describe: 'line: minimum change in percent to flag (default 25)' },
-      notes: { type: 'string', optional: true, describe: 'line: context at x values, "2020:Theaters close|2012:The Avengers opens" (words only; no numbers)' },
-      ...PLACE_PARAMS,
-    },
-    apply: (s: MoviesState, p: Partial<View> & { id: string; kind: ViewKind; title: string; query: string; at?: Place; target?: string }) => {
-      const rows = runQuery(p.query);
-      if (!rows.length) throw new Rejected('the query ran but returned no rows; loosen the filter (findLike folds case) or check the names');
-      const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0, size: p.size ?? s.views[p.id]?.size ?? (p.kind === 'line' ? 'full' : 'half'), x: p.x ?? '', flag: p.flag ?? 'none', threshold: p.threshold ?? 0, notes: p.notes ?? '' };
-      if (p.kind === 'stat' && !statOf(rows, view)) {
-        const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
-        throw new Rejected(`value "${view.value}" gives no number; the rows have fields: ${keys}`);
-      }
-      if (p.kind === 'line' && !lineData(rows, view).series.length) {
-        const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
-        throw new Rejected(`x "${view.x}" and value "${view.value}" give no points; the rows have fields: ${keys} (for per-genre years use label "name", x "movies.year", value "sum(movies.gross)")`);
-      }
-      if ((p.kind === 'bar' || p.kind === 'pie') && !series(rows, view).length) {
-        const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
-        throw new Rejected(`value "${view.value}" gives no numbers for label "${view.label}"; the rows have fields: ${keys}`);
-      }
-      // Re-showing an existing id keeps its spot unless a place is given.
-      const placed = p.at ? place(s.order, p.id, p.at, p.target) : { order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
-      const views = { ...s.views, [p.id]: view };
-      if ('removed' in placed && placed.removed) delete views[placed.removed];
-      // A changed or removed view drops its selection: the items may no longer be on screen.
-      const selection = s.selection && views[s.selection.view] && s.selection.view !== p.id ? s.selection : null;
-      return { views, order: placed.order, selection };
-    },
-  }),
-  act('view.move', {
-    describe: 'Move a view to the end, or before/after another view.',
-    params: { id: { type: 'string', ref: 'view' }, at: { type: 'enum', values: ['end', 'before', 'after'] }, target: { type: 'string', ref: 'view', optional: true } },
-    apply: (s: MoviesState, p: { id: string; at: 'end' | 'before' | 'after'; target?: string }) => {
-      if (!s.views[p.id]) throw new Rejected(`no view "${p.id}"`);
-      return { ...s, order: place(s.order, p.id, p.at, p.target).order };
-    },
-  }),
-  act('view.resize', {
-    describe: 'Make a view half or full width.',
-    params: { id: { type: 'string', ref: 'view' }, size: { type: 'enum', values: ['half', 'full'] } },
-    apply: (s: MoviesState, p: { id: string; size: 'half' | 'full' }) => {
-      const v = s.views[p.id];
-      if (!v) throw new Rejected(`no view "${p.id}"`);
-      return { ...s, views: { ...s.views, [p.id]: { ...v, size: p.size } } };
-    },
-  }),
-  act('view.remove', {
-    describe: 'Remove a view.',
-    params: { id: { type: 'string', ref: 'view' } },
-    apply: (s: MoviesState, p: { id: string }) => {
-      if (!s.views[p.id]) throw new Rejected(`no view "${p.id}"`);
-      const { [p.id]: _gone, ...views } = s.views;
-      return { views, order: s.order.filter((x) => x !== p.id), selection: s.selection?.view === p.id ? null : s.selection };
-    },
-  }),
-  act('view.clear', { describe: 'Remove every view.', params: {}, apply: () => initial() }),
-  act('select.set', {
-    describe: 'Select things in one view (the user does this by clicking; you may too, to point at something). Replaces the current selection.',
-    params: {
-      view: { type: 'string', ref: 'view' },
-      items: { type: 'string', describe: 'graph: "person:Name|movie:Title|person:Name > movie:Title" (nodes, and edges as "a > b"); bar: bar labels "Avatar|Titanic"' },
-    },
-    apply: (s: MoviesState, p: { view: string; items: string }) => {
-      if (!s.views[p.view]) throw new Rejected(`no view "${p.view}"`);
-      const items = [...new Set(p.items.split('|').map((x) => x.trim()).filter(Boolean))];
-      if (!items.length) throw new Rejected('select at least one item, or use select.clear');
-      return { ...s, selection: { view: p.view, items } };
-    },
-  }),
-  act('select.clear', { describe: 'Clear the selection.', params: {}, apply: (s: MoviesState) => ({ ...s, selection: null }) }),
-];
-
-export function moviesBrief(schema: string) {
-  return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
-Pick the view: line for change over time (years): series are labels, x a year path, value summed per year; set flag "drops" to have the chart mark the big falls, and notes for context at a year; stat for a single number ("how much did this make", "how many films", "what year"; value is the field or count(...), label names what it is), bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
-Views sit in a two-column grid in order. You decide where: "at" end (default), before/after a target view, or "replace" a target (e.g. "turn that bar chart into a pie" = a new view that replaces it). size "full" spans both columns. Reuse a view's id to change it in place; view.move and view.resize rearrange.
-The user's current selection (what they clicked in a graph or chart) is in the state as "selected" rows. "this", "these", "them", "the selected ones" mean the selection: use those names in your query. You may select things yourself with select.set to point at an answer.
-Keep "say" to one short sentence.
-
-The database (ZQL schema; -> points out of a type, <- points in):
-${schema}
+/** The movies database as a rixse data source: ZQL in, rows out; its errors come back as the fix. */
+let schemaText = '(loading)';
+export const zegaSource = defineSource({
+  describe: () => `The movies database, queried in ZQL (-> points out of a type, <- points in):
+${schemaText}
 
 ZQL, the read queries you may write:
-- Shape: { Type(filter) limit 10000000 { field field } }. Always add "limit 10000000" (it covers every row) after a list filter; a filter of only equality tests means exactly ONE node.
+- Shape: { Type(filter) limit 100000 { field field } }. Always add "limit 100000" (it covers every row) after a list filter; a filter of only equality tests means exactly ONE node.
 - Tests: = != > < >= <=, &&, ||, parentheses. Text: field findLike "x" (case-insensitive substring; prefer it for names and titles).
 - Follow a relationship inside the braces with its own arrow: { Movie(title findLike "Titanic") limit 100000 { title cast -> Person { name } } } and { Person(name findLike "Tom Hanks") limit 100000 { name acted_in <- Movie { title year } } }.
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
-- There is NO sort, count, sum or group in ZQL: fetch the rows and let the view do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed (e.g. label "year", value "gross" gives one bar per year).
+- There is NO sort, count, sum or group in ZQL: fetch the rows and let the component do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed.`,
+  query: 'one ZQL read query, shaped { Type(filter) limit 100000 { field rel -> Type { field } } }',
+  run: (query) => {
+    const z = getZega();
+    if (!z) throw new Error('LOADING');
+    return z.run(query);
+  },
+  hint: (error) => {
+    if (error === 'LOADING') return 'the movies database is still loading; try again in a moment';
+    const msg = error.replace(/^execution error: /, '');
+    const first = msg.split('\n').find((l) => /error:/.test(l)) ?? msg.split('\n')[0]!;
+    return `zega rejected the query: ${first.trim().slice(0, 240)}.${hintFor(msg, schemaText)}`;
+  },
+});
+
+const fields = (rows: unknown[]) => Object.keys((rows[0] ?? {}) as object).join(', ');
+const LABEL = { type: 'string', default: '', describe: 'field path naming each bar/slice/series, e.g. "title", "name"' } as const;
+const VALUE = { type: 'string', default: '', describe: 'field path or sum|count|avg|max|min(path), e.g. "gross", "sum(movies.gross)", "count(acted_in)"' } as const;
+const SORT = { type: 'string', default: '', describe: '"value desc" (default), "value asc" or "label asc"' } as const;
+const LIMIT = { type: 'number', default: 0, describe: 'keep the first N after sorting' } as const;
+
+/** The movies catalogue: rixse Components reading zega. */
+export const movieComponents = [
+  defineComponent('stat', {
+    describe: 'ONE number shown large: how much, how many, what year. Several rows are summed (or as the value says).',
+    sizes: ['small', 'medium'], source: 'zega', identity: ['query', 'value'],
+    params: { label: LABEL, value: VALUE },
+    check: (rows, v) => (statOf(rows, v) ? null : `value "${v.value}" gives no number; the rows have fields: ${fields(rows)}`),
+  }),
+  defineComponent('bar', {
+    describe: 'compare amounts across things (box office, counts); use limit, e.g. 10–20.',
+    sizes: ['medium', 'large', 'viewport'], size: 'medium', source: 'zega', identity: ['query', 'label', 'value', 'sort', 'limit'],
+    params: { label: LABEL, value: VALUE, sort: SORT, limit: LIMIT },
+    select: 'bar labels, "Avatar|Titanic"',
+    check: (rows, v) => (series(rows, v).length ? null : `value "${v.value}" gives no numbers for label "${v.label}"; the rows have fields: ${fields(rows)}`),
+  }),
+  defineComponent('pie', {
+    describe: 'shares of a whole; shows 7 slices plus Other.',
+    sizes: ['medium', 'large'], source: 'zega', identity: ['query', 'label', 'value'],
+    params: { label: LABEL, value: VALUE, sort: SORT, limit: LIMIT },
+    check: (rows, v) => (series(rows, v).length ? null : `value "${v.value}" gives no numbers for label "${v.label}"; the rows have fields: ${fields(rows)}`),
+  }),
+  defineComponent('line', {
+    describe: 'change over time (years): series are labels, x a year path, value summed per year. The chart computes and flags the big changes itself.',
+    sizes: ['large', 'viewport'], size: 'viewport', source: 'zega', identity: ['query', 'label', 'x', 'value'],
+    params: {
+      label: LABEL, value: VALUE, limit: LIMIT,
+      x: { type: 'string', describe: 'the x-axis field path, e.g. "movies.year"' },
+      flag: { type: 'enum', values: FLAGS, default: 'none', describe: 'mark the biggest drops/rises' },
+      threshold: { type: 'number', default: 0, describe: 'minimum change in percent to flag (default 25)' },
+      notes: { type: 'string', default: '', describe: 'context at x values, "2020:Theaters close|2012:The Avengers opens" (words only)' },
+    },
+    select: 'a year, "x:2019"',
+    check: (rows, v) => (lineData(rows, v).series.length ? null : `x "${v.x}" and value "${v.value}" give no points; the rows have fields: ${fields(rows)} (for per-genre years use label "name", x "movies.year", value "sum(movies.gross)")`),
+  }),
+  defineComponent('table', {
+    describe: 'detail rows.',
+    sizes: ['medium', 'large', 'viewport'], size: 'large', source: 'zega', identity: ['query'],
+  }),
+  defineComponent('graph', {
+    describe: 'how movies and people connect (shared cast, a director’s films).',
+    sizes: ['large', 'viewport'], source: 'zega', identity: ['query'],
+    select: 'nodes and edges, "person:Name|movie:Title|person:Name > movie:Title"',
+  }),
+];
+
+export const moviesViewport = createViewport<View & { [k: string]: unknown }>({ components: movieComponents, sources: { zega: zegaSource } });
+export const movieActions = moviesViewport.actions;
+
+/** Run a component's query (the page draws with this; rejections read the same). */
+export function runQuery(query: string): unknown[] {
+  try { return zegaSource.run(query); }
+  catch (e) { throw new Rejected(zegaSource.hint!(e instanceof Error ? e.message : String(e))); }
+}
+
+export function moviesBrief(schema: string) {
+  schemaText = schema;
+  return `You answer questions about movies by showing components on the page. You decide WHAT to show: a component, its ZQL query and params. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
+Where it goes is yours: "at" end (default), before/after a target, or "replace" a target (e.g. "turn that bar chart into a pie" = a new component that replaces it). Pick a size the kind comes in; the page lays out columns. Reuse an id to change a component in place; view.move and view.resize rearrange.
+The user's current selection (what they clicked) is in the state as "selected" rows. "this", "these", "them", "the selected ones" mean the selection: use those names in your query. You may select things yourself with select.set to point at an answer.
+Keep "say" to one short sentence.
+
+${moviesViewport.catalogue()}
+
 Examples:
-- Box office over time for a few genres, with the big drops flagged: kind line, query { Genre(name = "superhero" || name = "science fiction") limit 100000 { name movies <- Movie { year gross } } }, label "name", x "movies.year", value "sum(movies.gross)", flag "drops", notes "2020:Theaters close".
+- Box office over time for a few genres, big drops flagged: kind line, query { Genre(name = "superhero" || name = "science fiction") limit 100000 { name movies <- Movie { year gross } } }, label "name", x "movies.year", value "sum(movies.gross)", flag "drops", notes "2020:Theaters close".
 - One film's box office: kind stat, query { Movie(title findLike "Titanic") limit 100000 { title gross } }, label "title", value "gross".
 - Top 10 by box office: kind bar, query { Movie limit 100000 { title gross } }, label "title", value "gross", limit 10.
 - Box office by genre: kind pie, query { Genre limit 100000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
@@ -331,13 +286,13 @@ export function createMoviesWire() {
       type: 'selected', list: (s) => (s.selection ? s.selection.items.map((item) => ({ view: s.selection!.view, item })) : []),
       fields: [{ name: 'view', ref: 'view' }, { name: 'item' }],
     }, {
-      type: 'view', list: (s) => s.order.map((id) => s.views[id]!), id: (v) => v.id,
-      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }, { name: 'size', default: 'half' }, { name: 'x', default: '' }, { name: 'flag', default: 'none' }, { name: 'threshold', default: 0 }, { name: 'notes', default: '' }],
+      type: 'view', list: (s) => s.order.map((id) => s.items[id]!), id: (v) => v.id,
+      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'size' }, { name: 'query' }, ...(['label', 'value', 'sort', 'limit', 'x', 'flag', 'threshold', 'notes'] as const).map((name) => { const d = ({ limit: 0, threshold: 0, flag: 'none' } as Record<string, unknown>)[name] ?? ''; return { name, default: d, get: (v: View) => v[name] ?? d }; })],
     }],
   });
 }
 
 export function createMoviesStore() {
-  return createStore<MoviesState>({ initial: initial(), actions: movieActions });
+  return createStore<MoviesState>({ initial: moviesViewport.initial() as MoviesState, actions: movieActions as never });
 }
 export type MoviesStore = ReturnType<typeof createMoviesStore>;

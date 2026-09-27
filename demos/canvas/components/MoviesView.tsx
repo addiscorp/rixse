@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force';
 import { useRixseState } from 'rixse-react';
+import { layout } from 'rixse';
 import { loadZega, getZega } from '@/lib/zega';
 import { Component, type ReactNode } from 'react';
 import { capped, lineData, series, statOf, type MoviesStore, type View } from '@/lib/movies';
@@ -602,6 +603,10 @@ export function MoviesView({ store }: { store: MoviesStore }) {
   const [status, setStatus] = useState('loading zega…');
   const [dark, setDark] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  // The viewport component lays out by ITS container's width, never the window's.
+  const [width, setWidth] = useState(0);
+  useEffect(() => { const el = scroller.current; if (!el) return; const ro = new ResizeObserver(([e]) => setWidth(e!.contentRect.width)); ro.observe(el); return () => ro.disconnect(); }, []);
+  const grid = layout(state, width);
   useEffect(() => { loadZega().then((z) => { const n = (q: string) => z.run(q).length.toLocaleString('en-US'); setStatus(`zega loaded in ${z.loadMs} ms · ${n('{ Movie limit 100000 { qid } }')} movies · ${n('{ Person limit 100000 { qid } }')} people`); }).catch((e) => setStatus(`zega failed: ${e}`)); }, []);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); setDark(m.matches); const on = (e: MediaQueryListEvent) => setDark(e.matches); m.addEventListener('change', on); return () => m.removeEventListener('change', on); }, []);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); }, [state.order.length]);
@@ -609,13 +614,13 @@ export function MoviesView({ store }: { store: MoviesStore }) {
     <section className="pane canvas" aria-label="Movies">
       <div className="pane-head">
         <h2 className="pane-title">Movies</h2>
-        <span className="soft">{status} · views: bar, pie, table, graph</span>
+        <span className="soft">{status} · components: stat, bar, line, pie, table, graph · sizes viewport → large → medium → small</span>
       </div>
       <div className="screen-scroll" ref={scroller}>
         <div className={cn('ui-screen bg-background text-foreground', dark && 'dark')}>
           {state.order.length === 0
             ? <p className="text-sm text-muted-foreground">Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”, “Christopher Nolan’s films”.</p>
-            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <div key={id} className={cn('min-w-0', state.views[id]!.size === 'full' && 'lg:col-span-2')}><ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} store={store} selected={state.selection?.view === id ? state.selection.items : []} /></ViewBoundary></div>)}</div>}
+            : <div className="grid gap-4 [grid-auto-flow:dense]" style={{ gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))` }}>{grid.cells.map(({ id, cols, rows }) => { const v = state.items[id]!; return <div key={id} className="min-w-0" data-size={v.size} style={{ gridColumn: `span ${cols}`, gridRow: rows > 1 ? `span ${rows}` : undefined }}><ViewBoundary key={`${id}:${v.query}:${v.kind}`} title={v.title}><ViewCard v={v} store={store} selected={state.selection?.view === id ? state.selection.items : []} /></ViewBoundary></div>; })}</div>}
         </div>
       </div>
     </section>
