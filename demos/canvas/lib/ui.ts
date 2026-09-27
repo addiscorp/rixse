@@ -29,6 +29,81 @@ const needContainer = (s: UiState, id: string) => { const n = need(s, id); if (!
 const insert = (list: string[], id: string, index?: number) => { const l = list.filter((x) => x !== id); l.splice(index === undefined ? l.length : Math.max(0, Math.min(l.length, index)), 0, id); return l; };
 const descendants = (s: UiState, id: string): string[] => [id, ...s.nodes[id]!.children.flatMap((c) => descendants(s, c))];
 
+
+// ── Blocks: one action places a whole section ─────────────────────────────
+// The agent decides at the level of sections; rixse expands a block locally
+// into ordinary nodes with predictable ids (e.g. "hero.price"), which the agent
+// can still update, move or remove one by one afterwards.
+export const BLOCKS = ['header', 'hero', 'cards', 'stats', 'section', 'form'] as const;
+type BlockProps = { id: string; parent: string; block: (typeof BLOCKS)[number]; title?: string; text?: string; price?: string; badge?: string; image?: string; items?: string; actions?: string; cta?: string; secondary?: string; cols?: number; index?: number };
+type Spec = { kind: Kind; id: string; text?: string; variant?: string; dir?: UiNode['dir']; align?: UiNode['align']; justify?: UiNode['justify']; gap?: UiNode['gap']; cols?: number; grow?: boolean; children?: Spec[] };
+
+const rows = (items: string | undefined) => (items ?? '').split(';').map((r) => r.split('|').map((x) => x.trim())).filter((r) => r.some(Boolean));
+const list = (items: string | undefined) => (items ?? '').split('|').map((x) => x.trim()).filter(Boolean);
+
+function blockSpec(p: BlockProps): Spec {
+  const id = p.id;
+  switch (p.block) {
+    case 'header': {
+      // Brand, spacer, then each action: "icon:shopping-cart|avatar:Ana Ruiz|text:Ana|button:Sign in"
+      const actions = list(p.actions).map((a, i): Spec => {
+        const [k, ...rest] = a.split(':'); const v = rest.join(':').trim();
+        const kind = (['icon', 'avatar', 'text', 'button', 'badge'].includes(k!.trim()) ? k!.trim() : 'text') as Kind;
+        return { kind, id: `${id}.${kind}${i + 1}`, text: v || k!.trim(), variant: kind === 'button' ? 'outline' : undefined };
+      });
+      return { kind: 'stack', id, dir: 'row', align: 'center', gap: 'md', children: [
+        { kind: 'heading', id: `${id}.title`, text: p.title ?? 'Brand', variant: 'h3' },
+        { kind: 'spacer', id: `${id}.spacer` },
+        ...actions,
+      ] };
+    }
+    case 'hero': return { kind: 'grid', id, cols: 2, gap: 'lg', children: [
+      { kind: 'image', id: `${id}.image`, text: p.image ?? p.title ?? 'image' },
+      { kind: 'stack', id: `${id}.info`, gap: 'md', children: [
+        ...(p.badge ? [{ kind: 'badge' as Kind, id: `${id}.badge`, text: p.badge }] : []),
+        { kind: 'heading', id: `${id}.title`, text: p.title ?? 'Title', variant: 'h1' },
+        ...(p.price ? [{ kind: 'heading' as Kind, id: `${id}.price`, text: p.price, variant: 'h2' }] : []),
+        ...(p.text ? [{ kind: 'text' as Kind, id: `${id}.text`, text: p.text }] : []),
+        ...(p.items ? [{ kind: 'list' as Kind, id: `${id}.list`, text: list(p.items).join('|') }] : []),
+        { kind: 'stack', id: `${id}.actions`, dir: 'row', gap: 'sm', children: [
+          { kind: 'button', id: `${id}.cta`, text: p.cta ?? 'Get started' },
+          ...(p.secondary ? [{ kind: 'button' as Kind, id: `${id}.secondary`, text: p.secondary, variant: 'outline' }] : []),
+        ] },
+      ] },
+    ] };
+    case 'cards': return { kind: 'stack', id, gap: 'md', children: [
+      ...(p.title ? [{ kind: 'heading' as Kind, id: `${id}.title`, text: p.title, variant: 'h2' }] : []),
+      // items: "Name|$45|alt text;Name|$60|alt text"
+      { kind: 'grid', id: `${id}.grid`, cols: p.cols ?? 3, gap: 'md', children: rows(p.items).map(([name, price, alt], i): Spec => ({
+        kind: 'card', id: `${id}.${i + 1}`, text: name, gap: 'sm', children: [
+          { kind: 'image', id: `${id}.${i + 1}.image`, text: alt || name },
+          ...(price ? [{ kind: 'text' as Kind, id: `${id}.${i + 1}.price`, text: price }] : []),
+          ...(p.cta ? [{ kind: 'button' as Kind, id: `${id}.${i + 1}.cta`, text: p.cta, variant: 'outline' }] : []),
+        ],
+      })) },
+    ] };
+    case 'stats': return { kind: 'grid', id, cols: p.cols ?? Math.max(1, Math.min(4, rows(p.items).length)), gap: 'md', children: rows(p.items).map(([label, value, delta], i): Spec => ({
+      kind: 'card', id: `${id}.${i + 1}`, children: [{ kind: 'metric', id: `${id}.${i + 1}.metric`, text: [label, value, delta].filter((x) => x !== undefined).join('|'), variant: delta?.startsWith('-') ? 'down' : 'up' }],
+    })) };
+    case 'section': return { kind: 'stack', id, gap: 'sm', children: [
+      { kind: 'heading', id: `${id}.title`, text: p.title ?? 'Section', variant: 'h2' },
+      ...(p.text ? [{ kind: 'text' as Kind, id: `${id}.text`, text: p.text }] : []),
+      ...(p.items ? [{ kind: 'list' as Kind, id: `${id}.list`, text: list(p.items).join('|') }] : []),
+    ] };
+    case 'form': return { kind: 'card', id, text: p.title ?? 'Form', gap: 'md', children: [
+      ...(p.text ? [{ kind: 'text' as Kind, id: `${id}.text`, text: p.text }] : []),
+      ...list(p.items).map((f, i): Spec => ({ kind: 'input', id: `${id}.field${i + 1}`, text: f })),
+      { kind: 'button', id: `${id}.submit`, text: p.cta ?? 'Submit' },
+    ] };
+  }
+}
+
+function flatten(spec: Spec, parent: string): UiNode[] {
+  const { children = [], ...rest } = spec;
+  const node: UiNode = { ...blank(spec.id, spec.kind, parent), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) as Partial<UiNode>, children: children.map((c) => c.id) };
+  return [node, ...children.flatMap((c) => flatten(c, spec.id))];
+}
+
 const act = <P,>(type: string, def: Omit<ActionDef<UiState, P>, 'type'>) => defineAction<UiState, P>(type, def);
 const LAYOUT = {
   dir: { type: 'enum', values: ['row', 'column'], optional: true, describe: 'default column' },
@@ -40,6 +115,35 @@ const LAYOUT = {
 } as const;
 
 export const uiActions = [
+  act('ui.block', {
+    describe: 'Place a whole section in ONE action; rixse expands it into nodes with ids like "<id>.title", "<id>.price", "<id>.cta", "<id>.1" that you can update later. Prefer this over many ui.add lines.',
+    params: {
+      id: { type: 'string', describe: 'a new short slug for the section' },
+      parent: { type: 'string', ref: 'node' },
+      block: { type: 'enum', values: BLOCKS, describe: 'header: title + actions pushed right; hero: image beside badge/title/price/text/items/cta/secondary; cards: title + grid of items; stats: items as metrics; section: title + text/items; form: title + items as fields + cta' },
+      title: { type: 'string', optional: true },
+      text: { type: 'string', optional: true },
+      price: { type: 'string', optional: true },
+      badge: { type: 'string', optional: true },
+      image: { type: 'string', optional: true, describe: 'alt text' },
+      items: { type: 'string', optional: true, describe: 'cards: "Name|$45|alt;Name|$60|alt"; stats: "Label|Value|+8%;…"; hero/section list and form fields: "a|b|c"' },
+      actions: { type: 'string', optional: true, describe: 'header only: "icon:shopping-cart|avatar:Ana Ruiz|text:Ana|button:Sign in" (left to right, all at the far end)' },
+      cta: { type: 'string', optional: true },
+      secondary: { type: 'string', optional: true },
+      cols: { type: 'number', optional: true },
+      index: { type: 'number', optional: true },
+    },
+    apply: (s: UiState, p: BlockProps) => {
+      const parent = needContainer(s, p.parent);
+      const made = flatten(blockSpec(p), p.parent);
+      const taken = made.find((n) => s.nodes[n.id]);
+      if (taken) throw new Rejected(`node "${taken.id}" already exists — pick another block id`);
+      const nodes = { ...s.nodes };
+      for (const n of made) nodes[n.id] = n;
+      nodes[parent.id] = { ...parent, children: insert(parent.children, p.id, p.index) };
+      return { nodes };
+    },
+  }),
   act('ui.add', {
     describe: 'Add a node as the last child of a container (or at index). Parents must be added before their children.',
     params: {
