@@ -8,7 +8,7 @@ import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, f
 import { useRixseState } from 'rixse-react';
 import { loadZega, getZega } from '@/lib/zega';
 import { Component, type ReactNode } from 'react';
-import { capped, series, type MoviesStore, type View } from '@/lib/movies';
+import { capped, series, statOf, type MoviesStore, type View } from '@/lib/movies';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
@@ -17,6 +17,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const money = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${Math.round(n / 1e6)}M` : n.toLocaleString('en-US'));
 const fmt = (n: number, isMoney: boolean) => (isMoney ? money(n) : n.toLocaleString('en-US', { maximumFractionDigits: 1 }));
 const PALETTE = ['#4f7cff', '#e2531f', '#1f9d6b', '#9b6cff', '#e0a21b', '#e04f8c', '#2bb3c0', '#8a9a3a'];
+
+/** One number, large: the answer to "how much / how many / when". Several rows are summed (or as the value spec says). */
+/** One number, large: the answer to "how much / how many / when". */
+function StatView({ v, rows }: { v: View; rows: unknown[] }) {
+  const stat = statOf(rows, v);
+  if (!stat) return null;
+  const isMoney = /gross/.test(v.value), isYear = /year/.test(v.value) && !/count/.test(v.value);
+  return (
+    <div className="grid gap-1 py-2">
+      <span className="text-4xl font-semibold tracking-tight tabular-nums text-foreground">{isMoney ? money(stat.value) : isYear ? String(Math.round(stat.value)) : fmt(stat.value, false)}</span>
+      <span className="text-sm text-muted-foreground">{stat.caption}{isMoney ? ' · worldwide box office' : ''}</span>
+    </div>
+  );
+}
 
 function BarView({ v, rows, store, selected }: { v: View; rows: unknown[]; store: MoviesStore; selected: string[] }) {
   const { data, hidden } = capped(series(rows, v), 'bar');
@@ -445,6 +459,7 @@ function ViewCard({ v, store, selected }: { v: View; store: MoviesStore; selecte
       </CardHeader>
       <CardContent>
         {error ? <p className="text-sm text-destructive">{error}</p>
+          : v.kind === 'stat' ? <StatView v={v} rows={rows} />
           : v.kind === 'bar' ? <BarView v={v} rows={rows} store={store} selected={selected} />
           : v.kind === 'pie' ? <PieView v={v} rows={rows} />
           : v.kind === 'table' ? <TableView rows={rows} />

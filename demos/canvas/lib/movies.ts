@@ -5,7 +5,7 @@
 import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
 import { getZega } from './zega.ts';
 
-export const VIEW_KINDS = ['bar', 'pie', 'table', 'graph'] as const;
+export const VIEW_KINDS = ['stat', 'bar', 'pie', 'table', 'graph'] as const;
 export type ViewKind = (typeof VIEW_KINDS)[number];
 export const PLACES = ['end', 'before', 'after', 'replace'] as const;
 export type Place = (typeof PLACES)[number];
@@ -65,6 +65,19 @@ export function series(rows: unknown[], v: Pick<View, 'label' | 'value' | 'sort'
   const sign = dir === 'asc' ? 1 : -1;
   data = data.sort((a, b) => (key === 'label' ? a.label.localeCompare(b.label, undefined, { numeric: true }) * sign : (a.value - b.value) * sign));
   return v.limit > 0 ? data.slice(0, v.limit) : data;
+}
+
+/**
+ * A stat's one number (summed over rows, or as the value spec says) and its caption:
+ * the row's name when there is one real name, else the view's title.
+ */
+export function statOf(rows: unknown[], v: Pick<View, 'label' | 'value' | 'title'>): { value: number; caption: string } | null {
+  const vals = rows.map((r) => valueOf(r, v.value)).filter((x): x is number => x !== null);
+  if (!vals.length) return null;
+  const how = v.value.trim().match(AGG)?.[1];
+  const value = how === 'avg' ? vals.reduce((a, b) => a + b, 0) / vals.length : how === 'max' ? Math.max(...vals) : how === 'min' ? Math.min(...vals) : vals.reduce((a, b) => a + b, 0);
+  const names = [...new Set(rows.map((r) => labelOf(r, v.label)).filter((l) => l && !/^[\d.,\s]+$/.test(l)))];
+  return { value, caption: names.length === 1 ? names[0]! : v.title };
 }
 
 /** What a chart actually draws: at most CAP items; a pie folds the rest into "Other". */
@@ -136,7 +149,7 @@ export const movieActions = [
     describe: 'Show a view of query results, or replace the view with this id. The page runs the query in zega and draws the rows; you never see or write the data.',
     params: {
       id: { type: 'string', ref: 'view', describe: 'a short slug; reuse an existing id (or its handle) to change that view instead of adding one' },
-      kind: { type: 'enum', values: VIEW_KINDS, describe: 'bar: compare amounts; pie: shares of a whole; table: detail rows; graph: how movies and people connect' },
+      kind: { type: 'enum', values: VIEW_KINDS, describe: 'stat: ONE number (how much, how many, what year) shown large; bar: compare amounts; pie: shares of a whole; table: detail rows; graph: how movies and people connect' },
       title: { type: 'string' },
       query: { type: 'string', describe: 'one ZQL read query' },
       label: { type: 'string', optional: true, describe: 'bar/pie: field path for each slice/bar name, e.g. "title" or "name"' },
@@ -150,6 +163,10 @@ export const movieActions = [
       const rows = runQuery(p.query);
       if (!rows.length) throw new Rejected('the query ran but returned no rows; loosen the filter (findLike folds case) or check the names');
       const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0, size: p.size ?? s.views[p.id]?.size ?? 'half' };
+      if (p.kind === 'stat' && !statOf(rows, view)) {
+        const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
+        throw new Rejected(`value "${view.value}" gives no number; the rows have fields: ${keys}`);
+      }
       if ((p.kind === 'bar' || p.kind === 'pie') && !series(rows, view).length) {
         const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
         throw new Rejected(`value "${view.value}" gives no numbers for label "${view.label}"; the rows have fields: ${keys}`);
@@ -208,7 +225,7 @@ export const movieActions = [
 
 export function moviesBrief(schema: string) {
   return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
-Pick the view: bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
+Pick the view: stat for a single number ("how much did this make", "how many films", "what year"; value is the field or count(...), label names what it is), bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
 Views sit in a two-column grid in order. You decide where: "at" end (default), before/after a target view, or "replace" a target (e.g. "turn that bar chart into a pie" = a new view that replaces it). size "full" spans both columns. Reuse a view's id to change it in place; view.move and view.resize rearrange.
 The user's current selection (what they clicked in a graph or chart) is in the state as "selected" rows. "this", "these", "them", "the selected ones" mean the selection: use those names in your query. You may select things yourself with select.set to point at an answer.
 Keep "say" to one short sentence.
@@ -223,6 +240,7 @@ ZQL, the read queries you may write:
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
 - There is NO sort, count, sum or group in ZQL: fetch the rows and let the view do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed (e.g. label "year", value "gross" gives one bar per year).
 Examples:
+- One film's box office: kind stat, query { Movie(title findLike "Titanic") limit 100000 { title gross } }, label "title", value "gross".
 - Top 10 by box office: kind bar, query { Movie limit 100000 { title gross } }, label "title", value "gross", limit 10.
 - Box office by genre: kind pie, query { Genre limit 100000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
 - Films two actors share: kind graph, query { Movie(has cast(name findLike "A") && has cast(name findLike "B")) limit 100000 { title cast -> Person { name } } }.

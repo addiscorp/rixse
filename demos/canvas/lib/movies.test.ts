@@ -55,3 +55,12 @@ test('zega errors become exact corrections from the schema', () => {
   assert.equal(hintFor('error: Person.acted_in does not point ->', schema), ' Fix: write `acted_in <- …`.');
   assert.equal(hintFor('error: something else', schema), '');
 });
+
+import { statOf } from './movies.ts';
+
+test('stat: one number; caption is the one real name, else the view title', () => {
+  assert.deepEqual(statOf([{ title: 'Titanic', gross: 5 }], { label: 'title', value: 'gross', title: 'Box office' }), { value: 5, caption: 'Titanic' });
+  assert.deepEqual(statOf([{ gross: 5 }], { label: 'gross', value: 'gross', title: 'Box office' }), { value: 5, caption: 'Box office' }, 'a number is not a caption');
+  assert.deepEqual(statOf([{ name: 'x', movies: [{}, {}, {}] }], { label: 'name', value: 'count(movies)', title: 'Films' }), { value: 3, caption: 'x' });
+  assert.equal(statOf([{ title: 'a' }], { label: 'title', value: 'gross', title: 't' }), null);
+});
