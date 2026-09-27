@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import ReactDOMServer from 'react-dom/server';
 import { createCanvasStore } from '../demos/canvas/lib/canvas.ts';
@@ -8,6 +8,8 @@ import { canvasTree } from './tree.mjs';
 import { mergeCheckpointRows } from './result-store.mjs';
 
 const endpoint = 'http://127.0.0.1:8977';
+const opusOnly = process.argv.includes('--opus-only');
+const probeOnly = process.argv.includes('--probe');
 await mkdir('bench/results', { recursive: true });
 await mkdir('.tmp', { recursive: true });
 const models = [
@@ -109,16 +111,32 @@ async function call(model, messages) {
   return { data, raw: textFromResponse(data), latency };
 }
 
+if (probeOnly) {
+  const model = models.find((item) => item.key === 'opus-5.5');
+  const message = [{ role: 'system', content: 'Reply with one word.' }, { role: 'user', content: 'Probe.' }];
+  const { data } = await call(model, message);
+  console.log(`probe HTTP 200; model=${model.id}; usage=${Boolean(data?.result?.usage ?? data?.usage)}`);
+  process.exit(0);
+}
+
 const rows = [];
 let completed = 0;
-const total = 460;
+const total = opusOnly ? 60 : 460;
+let baseRun = null;
+if (opusOnly) {
+  const files = await readdir('bench/results');
+  const entries = await Promise.all(files.filter((name) => name.endsWith('.json')).map(async (filename) => ({ filename, ...JSON.parse(await readFile(`bench/results/${filename}`, 'utf8')) })));
+  baseRun = entries.filter((entry) => entry.complete && entry.rows.some((row) => row.model !== 'opus-5.5')).sort((a, b) => b.filename.localeCompare(a.filename))[0];
+  if (!baseRun) throw new Error('No complete Workers AI run exists');
+}
 await writeFile(outputPath, JSON.stringify({ run_id: runId, complete: false, request_count: 0, proxy_model_calls: 0, models, task_count: tasks.length, formats: inputs, rows: [] }, null, 2) + '\n', { flag: 'wx' });
 async function checkpoint(complete = false) {
-  const output = { run_id: runId, complete, request_count: rows.length, proxy_model_calls: rows.length, models, task_count: tasks.length, formats: inputs, adapter_seam: { name: 'anthropic-messages', enabled: true }, rows: [...rows] };
+  const combined = baseRun ? mergeCheckpointRows(baseRun.rows, rows) : rows;
+  const output = { run_id: runId, complete, request_count: combined.length, proxy_model_calls: baseRun ? baseRun.proxy_model_calls + rows.length : rows.length, models, task_count: tasks.length, formats: inputs, adapter_seam: { name: 'anthropic-messages', enabled: true }, rows: [...combined], ...(baseRun ? { workers_ai_run_id: baseRun.run_id, opus_retry_run_id: runId } : {}) };
   await writeFile(outputPath, JSON.stringify(output, null, 2) + '\n');
 }
 
-for (const model of models) {
+for (const model of models.filter((item) => !opusOnly || item.key === 'opus-5.5')) {
   const selected = model.provider === 'anthropic' ? [['json', 'json'], ['wire', 'json'], ['wire', 'wire']] : inputs.flatMap((format) => [['json', format], ...(format === 'wire' ? [['wire', format]] : [])].map(([output, input]) => [input, output]));
   for (const item of tasks) {
     const { store, initial } = makeTaskState(item);

@@ -1,6 +1,6 @@
-# Benchmark results — 2026-09-26T23-59-12-671Z
+# Benchmark results — 2026-09-27T00-16-03-375Z
 
-Completed measurements: 460. Proxy model calls in this run: 460. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-26T23-59-12-671Z.json**.
+Completed measurements: 460. Proxy model calls in this run: 520. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T00-16-03-375Z.json**.
 
 ## Summary by model
 
@@ -50,9 +50,9 @@ Metrics average model-reported API token counts and latency. First-try validity 
 
 | Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
 |---|---:|---:|---:|---:|---:|---:|
-| json/json | n/a | n/a | n/a | 0.0% | 0.0% | 20 |
-| wire/json | n/a | n/a | n/a | 0.0% | 0.0% | 20 |
-| wire/wire | n/a | n/a | n/a | 0.0% | 0.0% | 20 |
+| json/json | 690.1 | 114.6 | 1766.5 | 100.0% | 100.0% | 0 |
+| wire/json | 576.6 | 113.1 | 1716.9 | 100.0% | 100.0% | 0 |
+| wire/wire | 603.6 | 95.0 | 2201.9 | 100.0% | 100.0% | 0 |
 
 ## Input size for the 60-card state
 
@@ -61,9 +61,9 @@ API input tokens for task `sixty-card`, JSON output only. Counts are model-token
 | Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 |
 |---|---:|---:|---:|---:|---:|
 | markup | 5064 | 4789 | 4532 | 5064 | n/a |
-| json | 2482 | 2398 | 2153 | 2483 | n/a |
+| json | 2482 | 2398 | 2153 | 2483 | 3261 |
 | flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a |
-| wire | 1426 | 1397 | 1143 | 1426 | n/a |
+| wire | 1426 | 1397 | 1143 | 1426 | 1588 |
 
 ## Token-normalized result
 
@@ -91,6 +91,9 @@ Checker-passing tasks per 1,000 combined input and output tokens, by model and i
 | gemma-repeat | flight/json | 0.219 |
 | gemma-repeat | wire/json | 1.903 |
 | gemma-repeat | wire/wire | 1.769 |
+| opus-5.5 | json/json | 1.243 |
+| opus-5.5 | wire/json | 1.450 |
+| opus-5.5 | wire/wire | 1.431 |
 
 Highest observed rate: **qwen wire/json** (2.034 passes/1k tokens).
 
@@ -181,16 +184,16 @@ Checker: fail; rejection: no card "q3-revenue"
 
 ### Models, temperature, and token counts
 
-- gemma: @cf/google/gemma-4-26b-a4b-it; temperature undefined; Workers AI response usage fields (model tokenizer)
-- qwen: @cf/qwen/qwen3-30b-a3b-fp8; temperature undefined; Workers AI response usage fields (model tokenizer)
-- gpt-oss: @cf/openai/gpt-oss-120b; temperature undefined; Workers AI response usage fields (model tokenizer)
-- gemma-repeat: @cf/google/gemma-4-26b-a4b-it; temperature undefined; Workers AI response usage fields (model tokenizer)
+- gemma: @cf/google/gemma-4-26b-a4b-it; temperature 0; Workers AI response usage fields (model tokenizer)
+- qwen: @cf/qwen/qwen3-30b-a3b-fp8; temperature 0; Workers AI response usage fields (model tokenizer)
+- gpt-oss: @cf/openai/gpt-oss-120b; temperature 0; Workers AI response usage fields (model tokenizer)
+- gemma-repeat: @cf/google/gemma-4-26b-a4b-it; temperature 0; Workers AI response usage fields (model tokenizer)
 - opus-5.5: claude-opus-5-5; temperature provider default (omitted); Anthropic Messages input_tokens / output_tokens (Anthropic tokenizer)
 
 ### Rerun
 
-Run `npm run bench`. The runner creates a new timestamped JSON file, checkpoints every 20 calls, marks it complete only after all 460 calls finish, and the report selects the newest complete file.
+Run `npm run bench` for the full 460-call comparison. The runner creates a timestamped JSON file, checkpoints every 20 calls, and marks it complete only after all calls finish. An approved Opus-only retry uses `node --experimental-strip-types bench/run.mjs --opus-only`; it replaces the 60 Opus rows in the newest complete Workers AI result and records the underlying proxy call total. The report selects the newest complete combined file.
 
 ## Measurement limits
 
-The repeated Gemma pass measures same-model variance. Qwen’s 60-card Flight input exceeds its 32,768-token context window after the requested output budget; it is retained as a failed-by-size measurement. The Opus proxy rejected 60 requests; no Anthropic token counts were returned. First error: proxy HTTP 400: `temperature` is deprecated for this model.. Validity is counted from the real canvas store dispatch result on the first proposal. Recovery tasks include prior-turn rejection reasons in the prompt. Wire input translates session handles back to canvas IDs before dispatch.
+The repeated Gemma pass measures same-model variance. Qwen’s 60-card Flight input exceeds its 32,768-token context window after the requested output budget; it is retained as a failed-by-size measurement. Opus token counts come from the Anthropic Messages usage object. Validity is counted from the real canvas store dispatch result on the first proposal. Recovery tasks include prior-turn rejection reasons in the prompt. Wire input translates session handles back to canvas IDs before dispatch.
