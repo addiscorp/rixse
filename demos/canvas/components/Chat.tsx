@@ -40,27 +40,51 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brief, message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
       });
-      const p = (await res.json()) as Proposal;
-      const tResponse = performance.now();
-      if (!res.ok || p.error) throw new Error(p.error ?? `HTTP ${res.status}`);
-      note({ kind: 'agent', text: `← ${p.model}: ${p.actions.length} action${p.actions.length === 1 ? '' : 's'} · ${p.usage ? `${fmt(p.usage.input)} in / ${fmt(p.usage.output)} out tokens · ` : ''}${fmt(p.ms)} ms${p.parseError ? ' · reply was not JSON' : ''}` });
-      // The model refers to items by wire handle; translate back to real ids before dispatch.
-      const actions = format === 'wire' ? p.actions.map((a) => wire.resolve(a, store.params(a.type))) : p.actions;
-      const results = store.applyProposal(actions, message);
-      const tApplied = performance.now();
-      rejections.current = results.filter((r) => !r.result.ok).map((r) => `${r.action.type} ${JSON.stringify(r.action.payload ?? {})}: ${(r.result as { error: string }).error}`);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      // Streamed: the reply and each action arrive as their own lines, and each
+      // action is applied the moment it arrives.
+      let say = '', tFirstAction = 0, tSay = 0, applyMs = 0;
+      let done: { model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } } | null = null;
+      const results: { ok: boolean; line: string }[] = [];
+      setTurns((t) => [...t, { role: 'assistant', content: '…' }]);
+      const show = (content: string, footnote?: string) => setTurns((t) => [...t.slice(0, -1), { role: 'assistant', content, footnote }]);
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let pending = '';
+      for (;;) {
+        const { done: end, value } = await reader.read();
+        if (end) break;
+        pending += dec.decode(value, { stream: true });
+        let i;
+        while ((i = pending.indexOf('\n')) >= 0) {
+          const line = pending.slice(0, i); pending = pending.slice(i + 1);
+          if (!line.trim()) continue;
+          const ev = JSON.parse(line) as { kind: string; say?: string; action?: { type: string; payload?: unknown }; error?: string; model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } };
+          if (ev.kind === 'say' && ev.say) { say = ev.say; if (!tSay) tSay = performance.now(); show(say); }
+          else if (ev.kind === 'action' && ev.action) {
+            if (!tFirstAction) tFirstAction = performance.now();
+            const a0 = performance.now();
+            // The model refers to items by wire handle; translate back to real ids before dispatch.
+            const a = format === 'wire' ? wire.resolve(ev.action, store.params(ev.action.type)) : ev.action;
+            const r = store.dispatch(a, 'agent', { why: message });
+            applyMs += performance.now() - a0;
+            results.push({ ok: r.ok, line: r.ok ? '' : `${a.type} ${JSON.stringify(a.payload ?? {})}: ${(r as { error: string }).error}` });
+          } else if (ev.kind === 'error') throw new Error(ev.error);
+          else if (ev.kind === 'done') done = ev;
+        }
+      }
+      const tEnd = performance.now();
+      rejections.current = results.filter((r) => !r.ok).map((r) => r.line);
+      const failed = results.filter((r) => !r.ok).length;
       // The reply was written before rixse applied anything: say plainly what did not land.
-      const failed = results.filter((r) => !r.result.ok).length;
-      const footnote = failed ? `${failed} of ${results.length} change${results.length === 1 ? '' : 's'} didn't apply — see the logs.` : undefined;
-      setTurns((t) => [...t, { role: 'assistant', content: p.say || '(done)', footnote }]);
-      // Time to first paint of the result: two frames after React commits.
+      show(say || '(done)', failed ? `${failed} of ${results.length} change${results.length === 1 ? '' : 's'} didn't apply — see the logs.` : undefined);
+      const tm = done?.timing, u = done?.usage;
+      note({ kind: 'agent', text: `← ${done?.model ?? model}: ${results.length} action${results.length === 1 ? '' : 's'}${u ? ` · ${fmt(u.input)} in / ${fmt(u.output)} out tokens` : ''}` });
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const tPaint = performance.now();
         const r = (a: number, b: number) => fmt(Math.round(b - a));
-        const tm = p.timing;
-        const overhead = tm ? Math.round(tResponse - tContext) - tm.model : 0;
-        const rate = p.usage && tm && tm.model > 0 ? Math.round((p.usage.output / tm.model) * 1000) : 0;
-        note({ kind: 'agent', text: `⏱ ${r(t0, tPaint)} ms = context ${r(t0, tContext)} · model ${tm ? fmt(tm.model) : '?'}${p.usage ? ` (${fmt(p.usage.output)} out tok, ${rate} tok/s)` : ''} · network+server ${fmt(overhead)} · apply ${r(tResponse, tApplied)} · paint ${r(tApplied, tPaint)}` });
+        const rate = u && tm && tm.model > 0 ? Math.round((u.output / tm.model) * 1000) : 0;
+        note({ kind: 'agent', text: `⏱ first action ${tFirstAction ? r(t0, tFirstAction) : '—'} ms · reply ${tSay ? r(t0, tSay) : '—'} ms · all done ${r(t0, tPaint)} ms = context ${r(t0, tContext)} · model first token ${tm?.firstToken ?? '?'} / total ${tm ? fmt(tm.model) : '?'}${u ? ` (${fmt(u.output)} out tok, ${rate} tok/s)` : ''} · apply ${fmt(Math.round(applyMs))} · last paint ${r(tEnd, tPaint)}` });
       }));
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
