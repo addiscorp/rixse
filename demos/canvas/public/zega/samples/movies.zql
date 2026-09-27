@@ -1,0 +1,62 @@
+// Movies: the 250 highest-grossing films with a US-dollar box office figure on
+// Wikidata (CC0), with cast, directors and genres. Gross is worldwide USD as
+// Wikidata records it.
+schema {
+  type Movie {
+    qid: String
+    title: String
+    year: Int
+    gross: Int
+    cast: CAST -> Person[]
+    directors: DIRECTED -> Person[]
+    genres: TAGGED -> Genre[]
+  }
+
+  type Person {
+    qid: String
+    name: String
+    acted_in: CAST <- Movie[]
+    directed: DIRECTED <- Movie[]
+  }
+
+  type Genre {
+    qid: String
+    name: String
+    movies: TAGGED <- Movie[]
+  }
+
+  display {
+    table
+    graph
+  }
+}
+
+unique {
+  Movie { qid }
+  Person { qid }
+  Genre { qid }
+}
+
+mutation csv ["./samples/movies-movies.csv"] {
+  Movie(qid: $qid && title: $title && year: $year && gross: $gross) { qid }
+}
+
+mutation csv ["./samples/movies-people.csv"] {
+  Person(qid: $qid && name: $name) { qid }
+}
+
+mutation csv ["./samples/movies-genres.csv"] {
+  Genre(qid: $qid && name: $name) { qid }
+}
+
+mutation csv ["./samples/movies-cast.csv"] {
+  Movie(qid: $movie) { cast -> link Person(qid: $other) }
+}
+
+mutation csv ["./samples/movies-directed.csv"] {
+  Movie(qid: $movie) { directors -> link Person(qid: $other) }
+}
+
+mutation csv ["./samples/movies-tagged.csv"] {
+  Movie(qid: $movie) { genres -> link Genre(qid: $other) }
+}

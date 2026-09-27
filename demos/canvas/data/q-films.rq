@@ -1,0 +1,7 @@
+SELECT ?film ?filmLabel ?year ?gross WHERE {
+  ?film wdt:P31 wd:Q11424; p:P2142 ?bo.
+  ?bo psv:P2142 ?v. ?v wikibase:quantityAmount ?gross; wikibase:quantityUnit wd:Q4917.
+  OPTIONAL { ?film wdt:P577 ?date. BIND(YEAR(?date) AS ?year) }
+  FILTER(?gross > 250000000)
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
