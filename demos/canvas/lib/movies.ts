@@ -3,7 +3,7 @@
 // ZQL has no sorting or aggregation, so those live in the view spec (sort,
 // limit, sum/count/avg of a field), applied to zega's rows by the page.
 import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
-import { getZega } from './zega';
+import { getZega } from './zega.ts';
 
 export const VIEW_KINDS = ['bar', 'pie', 'table', 'graph'] as const;
 export type ViewKind = (typeof VIEW_KINDS)[number];
@@ -37,13 +37,39 @@ export function valueOf(row: unknown, spec: string): number | null {
 }
 export const labelOf = (row: unknown, spec: string) => at(row, spec || 'title').map(String).join(', ') || String(at(row, 'name')[0] ?? '');
 
-/** Rows → the numbers a bar or pie chart draws: sorted and cut exactly as the view says. */
+/** How many bars or slices a view may draw; the rest are summarised, never dropped silently. */
+export const CAP = { bar: 30, pie: 8 } as const;
+
+/**
+ * Rows → the numbers a bar or pie chart draws. Rows with the same label are
+ * grouped (films of one year become one bar): summed, or averaged/maxed/mined
+ * when the value spec says so. Then sorted and cut exactly as the view says.
+ */
 export function series(rows: unknown[], v: Pick<View, 'label' | 'value' | 'sort' | 'limit'>): Datum[] {
-  let data = rows.map((r) => ({ label: labelOf(r, v.label), value: valueOf(r, v.value) })).filter((d): d is Datum => d.value !== null && d.label !== '');
+  const how = v.value.trim().match(AGG)?.[1] ?? 'sum';
+  const groups = new Map<string, number[]>();
+  for (const r of rows) {
+    const label = labelOf(r, v.label), value = valueOf(r, v.value);
+    if (value === null || label === '') continue;
+    groups.set(label, [...(groups.get(label) ?? []), value]);
+  }
+  let data: Datum[] = [...groups].map(([label, vals]) => ({
+    label,
+    value: how === 'avg' ? vals.reduce((a, b) => a + b, 0) / vals.length : how === 'max' ? Math.max(...vals) : how === 'min' ? Math.min(...vals) : vals.reduce((a, b) => a + b, 0),
+  }));
   const [key, dir] = (v.sort || 'value desc').split(/\s+/);
   const sign = dir === 'asc' ? 1 : -1;
-  data = data.sort((a, b) => (key === 'label' ? a.label.localeCompare(b.label) * sign : (a.value - b.value) * sign));
+  data = data.sort((a, b) => (key === 'label' ? a.label.localeCompare(b.label, undefined, { numeric: true }) * sign : (a.value - b.value) * sign));
   return v.limit > 0 ? data.slice(0, v.limit) : data;
+}
+
+/** What a chart actually draws: at most CAP items; a pie folds the rest into "Other". */
+export function capped(data: Datum[], kind: 'bar' | 'pie'): { data: Datum[]; hidden: number } {
+  const cap = CAP[kind];
+  if (data.length <= cap) return { data, hidden: 0 };
+  if (kind === 'bar') return { data: data.slice(0, cap), hidden: data.length - cap };
+  const rest = data.slice(cap - 1);
+  return { data: [...data.slice(0, cap - 1), { label: `Other (${rest.length})`, value: rest.reduce((a, d) => a + d.value, 0) }], hidden: rest.length };
 }
 
 /** Run a view's query in zega; a zega error becomes a rejection the agent can read. */
@@ -94,23 +120,23 @@ export const movieActions = [
 
 export function moviesBrief(schema: string) {
   return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
-Pick the view: bar to compare amounts (box office, counts), pie for shares of a whole (at most ~8 slices; use limit), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
+Pick the view: bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
 Reuse a view's id to change it. Keep "say" to one short sentence.
 
 The database (ZQL schema; -> points out of a type, <- points in):
 ${schema}
 
 ZQL, the read queries you may write:
-- Shape: { Type(filter) limit 1000 { field field } }. Always add "limit 1000" after a list filter; a filter of only equality tests means exactly ONE node.
+- Shape: { Type(filter) limit 10000000 { field field } }. Always add "limit 10000000" (it covers every row) after a list filter; a filter of only equality tests means exactly ONE node.
 - Tests: = != > < >= <=, &&, ||, parentheses. Text: field findLike "x" (case-insensitive substring; prefer it for names and titles).
-- Follow a relationship inside the braces with its own arrow: { Movie(title findLike "Titanic") limit 1000 { title cast -> Person { name } } } and { Person(name findLike "Tom Hanks") limit 1000 { name acted_in <- Movie { title year } } }.
+- Follow a relationship inside the braces with its own arrow: { Movie(title findLike "Titanic") limit 100000 { title cast -> Person { name } } } and { Person(name findLike "Tom Hanks") limit 100000 { name acted_in <- Movie { title year } } }.
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
-- There is NO sort, count, sum or group in ZQL: fetch the rows and let the view do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit.
+- There is NO sort, count, sum or group in ZQL: fetch the rows and let the view do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed (e.g. label "year", value "gross" gives one bar per year).
 Examples:
-- Top 10 by box office: kind bar, query { Movie limit 1000 { title gross } }, label "title", value "gross", limit 10.
-- Box office by genre: kind pie, query { Genre limit 1000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
-- Films two actors share: kind graph, query { Movie(has cast(name findLike "A") && has cast(name findLike "B")) limit 1000 { title cast -> Person { name } } }.
-- A director's films: kind table, query { Person(name findLike "Christopher Nolan") limit 1000 { name directed <- Movie { title year gross } } }.`;
+- Top 10 by box office: kind bar, query { Movie limit 100000 { title gross } }, label "title", value "gross", limit 10.
+- Box office by genre: kind pie, query { Genre limit 100000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
+- Films two actors share: kind graph, query { Movie(has cast(name findLike "A") && has cast(name findLike "B")) limit 100000 { title cast -> Person { name } } }.
+- A director's films: kind table, query { Person(name findLike "Christopher Nolan") limit 100000 { name directed <- Movie { title year gross } } }.`;
 }
 
 export function createMoviesWire() {

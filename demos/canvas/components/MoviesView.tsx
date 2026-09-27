@@ -7,7 +7,8 @@ import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationNodeDatum } from 'd3-force';
 import { useRixseState } from 'rixse-react';
 import { loadZega, getZega } from '@/lib/zega';
-import { series, type MoviesStore, type View } from '@/lib/movies';
+import { Component, type ReactNode } from 'react';
+import { capped, series, type MoviesStore, type View } from '@/lib/movies';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
@@ -18,10 +19,11 @@ const fmt = (n: number, isMoney: boolean) => (isMoney ? money(n) : n.toLocaleStr
 const PALETTE = ['#4f7cff', '#e2531f', '#1f9d6b', '#9b6cff', '#e0a21b', '#e04f8c', '#2bb3c0', '#8a9a3a'];
 
 function BarView({ v, rows }: { v: View; rows: unknown[] }) {
-  const data = series(rows, v);
+  const { data, hidden } = capped(series(rows, v), 'bar');
   const isMoney = /gross/.test(v.value);
   const config = { value: { label: v.value || 'value', color: PALETTE[0] } } satisfies ChartConfig;
   return (
+    <>
     <ChartContainer config={config} className="w-full" style={{ height: Math.max(180, data.length * 30 + 20) }}>
       <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
         <CartesianGrid horizontal={false} />
@@ -31,11 +33,13 @@ function BarView({ v, rows }: { v: View; rows: unknown[] }) {
         <Bar dataKey="value" fill="var(--color-value)" radius={4} />
       </BarChart>
     </ChartContainer>
+    {hidden > 0 && <p className="text-xs text-muted-foreground mt-2">Showing the first {data.length} of {data.length + hidden}. Ask for a limit to change it.</p>}
+  </>
   );
 }
 
 function PieView({ v, rows }: { v: View; rows: unknown[] }) {
-  const data = series(rows, v);
+  const { data } = capped(series(rows, v), 'pie');
   const isMoney = /gross/.test(v.value);
   const total = data.reduce((a, d) => a + d.value, 0);
   const config = Object.fromEntries(data.map((d, i) => [d.label, { label: d.label, color: PALETTE[i % PALETTE.length] }])) satisfies ChartConfig;
@@ -141,6 +145,16 @@ function GraphView({ rows }: { rows: unknown[] }) {
   );
 }
 
+/** One broken view must never take the page down: it shows its own error instead. */
+class ViewBoundary extends Component<{ children: ReactNode; title: string }, { error: string }> {
+  state = { error: '' };
+  static getDerivedStateFromError(e: unknown) { return { error: String(e instanceof Error ? e.message : e) }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <Card className="min-w-0"><CardHeader><CardTitle>{this.props.title}</CardTitle><CardDescription className="text-destructive">This view failed to draw: {this.state.error}</CardDescription></CardHeader></Card>;
+  }
+}
+
 function ViewCard({ v }: { v: View }) {
   const { rows, ms, error } = useMemo(() => {
     const t = performance.now();
@@ -182,7 +196,7 @@ export function MoviesView({ store }: { store: MoviesStore }) {
         <div className={cn('ui-screen bg-background text-foreground', dark && 'dark')}>
           {state.order.length === 0
             ? <p className="text-sm text-muted-foreground">Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”, “Christopher Nolan’s films”.</p>
-            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <ViewCard key={id} v={state.views[id]!} />)}</div>}
+            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} /></ViewBoundary>)}</div>}
         </div>
       </div>
     </section>
