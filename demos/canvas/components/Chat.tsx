@@ -1,8 +1,7 @@
 'use client';
 // Chat is conversation. The agent's work lands on the canvas, not here.
 import { useRef, useState, type FormEvent } from 'react';
-import type { CanvasState, CanvasStore } from '@/lib/canvas';
-import type { Wire } from 'rixse';
+import type { Store, Wire } from 'rixse';
 import type { Note } from './Logs';
 
 type Turn = { role: 'user' | 'assistant'; content: string; footnote?: string };
@@ -11,7 +10,7 @@ type Format = 'wire' | 'json';
 type Model = 'gemma' | 'opus';
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export function Chat({ store, wire, note }: { store: CanvasStore; wire: Wire<CanvasState>; note: (n: Omit<Note, 'at' | 'order'>) => void }) {
+export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: Store<S>; wire: Wire<S>; brief: string; describe: (state: S) => string; hint: string; note: (n: Omit<Note, 'at' | 'order'>) => void }) {
   const [format, setFormat] = useState<Format>('wire');
   const [model, setModel] = useState<Model>('gemma');
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -31,12 +30,12 @@ export function Chat({ store, wire, note }: { store: CanvasStore; wire: Wire<Can
     const wireText = wire.encode(store.state);
     const jsonText = JSON.stringify(store.state);
     const context = format === 'wire' ? wireText : jsonText;
-    note({ kind: 'agent', text: `→ ${model === 'opus' ? 'Opus 5.5' : 'Gemma 4'} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${Object.keys(store.state.cards).length} cards` });
+    note({ kind: 'agent', text: `→ ${model === 'opus' ? 'Opus 5.5' : 'Gemma 4'} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
     try {
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
+        body: JSON.stringify({ brief, message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
       });
       const p = (await res.json()) as Proposal;
       if (!res.ok || p.error) throw new Error(p.error ?? `HTTP ${res.status}`);
@@ -72,7 +71,7 @@ export function Chat({ store, wire, note }: { store: CanvasStore; wire: Wire<Can
         </div>
       </div>
       <div className="turns">
-        {turns.length === 0 && <p className="hint">Ask for something on the canvas, e.g. “sketch a signup funnel with 4 steps and mark where people drop”.</p>}
+        {turns.length === 0 && <p className="hint">{hint}</p>}
         {turns.map((t, i) => <div key={i} className={`msg ${t.role === 'user' ? 'you' : 'agent'}`}>{t.content}{t.footnote && <small className="footnote">{t.footnote}</small>}</div>)}
         {busy && <div className="msg agent pending">thinking…</div>}
         <div ref={end} />

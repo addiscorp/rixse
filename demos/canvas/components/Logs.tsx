@@ -3,14 +3,14 @@
 // agent's round trips. Undo walks back the latest action, whoever made it.
 import { useEffect, useRef } from 'react';
 import { useRixseEvents } from 'rixse-react';
-import type { CanvasStore } from '@/lib/canvas';
+import type { Store } from 'rixse';
 
 export type Note = { at: number; order: number; kind: 'agent' | 'error'; text: string };
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour12: false });
 const short = (v: unknown) => { const s = JSON.stringify(v ?? {}); return s.length > 140 ? s.slice(0, 139) + '…' : s; };
 
-export function Logs({ store, notes }: { store: CanvasStore; notes: Note[] }) {
+export function Logs({ store, notes }: { store: Store<any>; notes: Note[] }) {
   const events = useRixseEvents(store);
   const end = useRef<HTMLDivElement>(null);
   const rows = [

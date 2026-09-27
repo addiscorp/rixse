@@ -106,6 +106,8 @@ export function createCanvasWire() {
   });
 }
 
+export const CANVAS_BRIEF = `You operate a canvas of cards and arrows on behalf of the user. The canvas is ${WIDTH}×${HEIGHT}.`;
+
 export function createCanvasStore() {
   return createStore<CanvasState>({ initial: { cards: {}, links: [] }, actions });
 }
