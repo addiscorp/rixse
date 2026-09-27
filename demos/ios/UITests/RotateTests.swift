@@ -21,6 +21,16 @@ final class RotateTests: XCTestCase {
     // Portrait: the stat (small) is on the page.
     let statTitle = app.staticTexts["Titanic Gross"]
     XCTAssertTrue(statTitle.waitForExistence(timeout: 10), "the stat component is missing in portrait")
+
+    // The bar order matches series() order: first datum at the top (web
+    // parity). Chart axis labels are exposed as legacy UILabels (type Other),
+    // so query .any; "Avatar" alone would match the selection chip.
+    let thirdBar = app.descendants(matching: .any)["Avatar: The Way of Water"].firstMatch
+    let lastBar = app.descendants(matching: .any)["The Avengers"].firstMatch
+    XCTAssertTrue(lastBar.waitForExistence(timeout: 10), "the chart's axis labels are missing")
+    XCTAssertLessThan(thirdBar.frame.minY, lastBar.frame.minY,
+      "series() order should render top-to-bottom (…Way of Water above The Avengers)")
+
     attach(XCUIScreen.main.screenshot(), named: "portrait")
 
     XCUIDevice.shared.orientation = .landscapeLeft

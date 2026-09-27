@@ -11,9 +11,18 @@ primitives on iOS (rixse#2):
 - The agent talks to the demo route (`/api/agent`) over plain http; nothing
   model-related lives in the app.
 
-Build (needs Xcode with the iOS platform and xcodegen):
+Build (needs Rust with the two iOS targets for the engine, and Xcode with
+xcodegen for the app):
 
 ```sh
+# 1. Build the engine: ZegaEngine.xcframework lands in demos/ios/vendor/
+#    (gitignored — the 2 × 9.6 MB staticlibs are build output, not source).
+#    Run this where xcodebuild lives (the Rust build runs anywhere with the
+#    aarch64-apple-ios{,-sim} targets; it skips work already done).
+demos/ios/zega/build-xcframework.sh
+
+# 2. Generate the project and build the app.
+cd demos/ios
 xcodegen
 xcodebuild -scheme RixseMovies -destination 'platform=iOS Simulator,name=iPhone 17' build
 ```

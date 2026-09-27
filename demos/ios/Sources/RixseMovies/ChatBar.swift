@@ -1,12 +1,7 @@
-// The chat bar: transcript above a composer, model switch on the left. The
-// model switch only covers the two models the demo route exposes without a
-// local key (gemma on the iMac, opus through its proxy).
+// The chat bar: a floating composer at the bottom — the message field gets
+// the full width; the transcript rides above it when open. The model switch
+// lives in the logs sheet.
 import SwiftUI
-
-private let MODEL_LABELS: [(id: String, label: String)] = [
-  ("gemma", "Gemma 4"),
-  ("opus", "Opus 5.5"),
-]
 
 struct ChatBar: View {
   @EnvironmentObject var movies: MovieStore
@@ -21,18 +16,9 @@ struct ChatBar: View {
           .frame(maxHeight: 280)
           .transition(.move(edge: .bottom).combined(with: .opacity))
       }
-      Divider()
       HStack(spacing: 10) {
-        Picker("Model", selection: $movies.model) {
-          ForEach(MODEL_LABELS, id: \.id) { m in
-            Text(m.label).tag(m.id)
-          }
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 190)
-
         TextField("Message the agent", text: $draft, axis: .vertical)
-          .textFieldStyle(.roundedBorder)
+          .textFieldStyle(.plain)
           .lineLimit(1...3)
           .focused($composing)
           .onSubmit(send)
@@ -54,10 +40,15 @@ struct ChatBar: View {
         .disabled(movies.busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .accessibilityLabel("Send")
       }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 10)
+      .background(.regularMaterial)
+      .clipShape(RoundedRectangle(cornerRadius: 20))
+      .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
       .padding(.horizontal, 12)
       .padding(.vertical, 8)
     }
-    .background(.bar)
+    .background(Color.clear)
   }
 
   private func send() {
@@ -90,6 +81,7 @@ private struct TranscriptView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
       }
+      .background(.bar)
       .onChange(of: movies.turns.count) { _, _ in
         if let last = movies.turns.last { proxy.scrollTo(last.id, anchor: .bottom) }
       }

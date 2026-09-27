@@ -10,6 +10,13 @@ struct LogsView: View {
   var body: some View {
     NavigationStack {
       List {
+        Section("Model") {
+          Picker("Model", selection: $movies.model) {
+            Text("Gemma 4").tag("gemma")
+            Text("Opus 5.5").tag("opus")
+          }
+          .pickerStyle(.segmented)
+        }
         Section("Action log (\(movies.log.count))") {
           ForEach(movies.log.reversed(), id: \.seq) { entry in
             HStack(alignment: .top, spacing: 8) {

@@ -59,6 +59,20 @@ extension MovieStore {
     case "wait":
       try? await Task.sleep(for: .milliseconds(Int(rest) ?? 1000))
       progress("STEP \(index) wait \(rest)")
+    case "linedump":
+      // What the line component is drawing, verbatim — for diagnosing chart bugs.
+      guard let id = state.order.first(where: { state.items[$0]?.kind == "line" }),
+            let item = state.items[id] else {
+        progress("STEP \(index) linedump — ERROR: no line chart on the page")
+        return
+      }
+      let result = rowsFor(item)
+      let data = lineData(result.rows, ViewSpec(item))
+      let series = data.series.map { s in
+        "\(s.name): \(s.points.count) points\(s.points.isEmpty ? "" : " \(jsNumber(s.points.first!.x))→\(jsNumber(s.points.last!.x))")"
+      }.joined(separator: " | ")
+      let flags = data.flags.map { "\($0.series)@\(jsNumber($0.x)) \(($0.pct > 0 ? "+" : ""))\($0.pct)%" }.joined(separator: " | ")
+      progress("STEP \(index) linedump — \(result.rows.count) rows — series: \(series) — xs \(data.xs.first.map(jsNumber) ?? "?")…\(data.xs.last.map(jsNumber) ?? "?") (\(data.xs.count)) — flags: \(flags.isEmpty ? "none" : flags)")
     default:
       progress("STEP \(index) UNKNOWN — \(line)")
     }

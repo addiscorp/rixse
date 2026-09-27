@@ -71,7 +71,7 @@ struct BarComponent: View {
       .chartYAxis {
         AxisMarks { _ in AxisValueLabel().font(.caption) }
       }
-      .chartYScale(domain: Array(data.map(\.label).reversed()))
+      .chartYScale(domain: data.map(\.label)) // first datum at the top, like the web
       .chartOverlay { proxy in
         Rectangle().fill(.clear).contentShape(Rectangle())
           .onTapGesture { location in
@@ -159,6 +159,10 @@ struct LineComponent: View {
     let v = ViewSpec(item)
     let data = lineData(rows, v)
     let isMoney = v.value.contains("gross")
+    // The web maps xs[0]…xs[-1] onto its own scale; Swift Charts' automatic
+    // domain rounds year-magnitude values to nonsense, so pin it here.
+    let xPad = data.xs.count > 1 ? max((data.xs.last! - data.xs.first!) * 0.03, 0.5) : 1.0
+    let xDomain: ClosedRange<Double> = data.xs.isEmpty ? 0...1 : (data.xs.first! - xPad)...(data.xs.last! + xPad)
     let focusX = selected.compactMap { i -> Double? in
       guard i.hasPrefix("x:") else { return nil }
       return Double(i.dropFirst(2))
@@ -190,7 +194,14 @@ struct LineComponent: View {
           if let last = s.points.last {
             PointMark(x: .value("year", last.x), y: .value("value", last.y))
               .foregroundStyle(colors[i % colors.count])
-              .symbolSize(30)
+              .symbolSize(s.points.count == 1 ? 90 : 30)
+              .annotation(position: .trailing, spacing: 4) {
+                // The web draws the latest value at each line's end; for a
+                // single-point series this label is the whole story.
+                Text(fmtText(last.y, isMoney: isMoney))
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(colors[i % colors.count])
+              }
           }
         }
         ForEach(Array(data.flags.enumerated()), id: \.offset) { _, fl in
@@ -225,6 +236,7 @@ struct LineComponent: View {
             }
         }
       }
+      .chartXScale(domain: xDomain)
       .chartYAxis {
         AxisMarks { value in
           AxisValueLabel {
@@ -237,6 +249,7 @@ struct LineComponent: View {
         AxisMarks { value in
           AxisValueLabel {
             if let n = value.as(Double.self) { Text("\(Int(n))").font(.caption2) }
+            else if let n = value.as(Int.self) { Text("\(n)").font(.caption2) }
           }
         }
       }

@@ -1,0 +1,7 @@
+# Compare-these diagnosis: bar, two selected, compare, then dump what the line draws.
+send top 10 movies by box office
+tapbars 2
+send compare these over the years
+linedump
+send box office over the years for superhero movies
+linedump

@@ -13,6 +13,7 @@ export CARGO_TARGET_DIR="$ROOT/.target"
 export TMPDIR="$ROOT/.tmp"
 
 for target in aarch64-apple-ios aarch64-apple-ios-sim; do
+  rustup target list --installed | grep -qx "$target" || rustup target add "$target"
   if [ ! -f "$CARGO_TARGET_DIR/$target/release/libzega_ios.a" ]; then
     (cd "$ZEGA_DIR" && cargo build --locked --release --target "$target")
   fi
