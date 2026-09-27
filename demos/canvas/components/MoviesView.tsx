@@ -18,7 +18,7 @@ const money = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 
 const fmt = (n: number, isMoney: boolean) => (isMoney ? money(n) : n.toLocaleString('en-US', { maximumFractionDigits: 1 }));
 const PALETTE = ['#4f7cff', '#e2531f', '#1f9d6b', '#9b6cff', '#e0a21b', '#e04f8c', '#2bb3c0', '#8a9a3a'];
 
-function BarView({ v, rows }: { v: View; rows: unknown[] }) {
+function BarView({ v, rows, store, selected }: { v: View; rows: unknown[]; store: MoviesStore; selected: string[] }) {
   const { data, hidden } = capped(series(rows, v), 'bar');
   const isMoney = /gross/.test(v.value);
   const config = { value: { label: v.value || 'value', color: PALETTE[0] } } satisfies ChartConfig;
@@ -30,7 +30,14 @@ function BarView({ v, rows }: { v: View; rows: unknown[] }) {
         <YAxis dataKey="label" type="category" width={170} tickLine={false} axisLine={false} tick={{ fontSize: 12 }} interval={0} />
         <XAxis type="number" tickFormatter={(n: number) => fmt(n, isMoney)} tickLine={false} axisLine={false} />
         <ChartTooltip content={<ChartTooltipContent formatter={(val) => fmt(Number(val), isMoney)} />} />
-        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+        <Bar dataKey="value" radius={4} className="cursor-pointer"
+          onClick={(d: { label?: string; payload?: { label?: string } }) => {
+            const label = d.payload?.label ?? d.label; if (!label) return;
+            const on = selected.includes(label);
+            store.dispatch(on && selected.length === 1 ? { type: 'select.clear', payload: {} } : { type: 'select.set', payload: { view: v.id, items: label } }, 'you');
+          }}>
+          {data.map((d) => <Cell key={d.label} fill={selected.includes(d.label) ? PALETTE[1] : PALETTE[0]} />)}
+        </Bar>
       </BarChart>
     </ChartContainer>
     {hidden > 0 && <p className="text-xs text-muted-foreground mt-2">Showing the first {data.length} of {data.length + hidden}. Ask for a limit to change it.</p>}
@@ -118,30 +125,106 @@ function toGraph(rows: unknown[]) {
   return { nodes: kept, links: links.filter((l) => ids.has(l.source) && ids.has(l.target)).slice(0, 600) };
 }
 
-function GraphView({ rows }: { rows: unknown[] }) {
+const edgeKey = (a: string, b: string) => `${a} > ${b}`;
+
+/**
+ * The interactive graph. Drag the background to pan, wheel to zoom, drag a
+ * node to move it. Click a node or an edge to select it (shift adds); the
+ * selection is rixse state, dispatched as "you", so the agent sees it.
+ */
+function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; store: MoviesStore; selected: string[] }) {
   const { nodes, links } = useMemo(() => toGraph(rows), [rows]);
   const [, tick] = useState(0);
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const [hover, setHover] = useState<string | null>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const drag = useRef<{ kind: 'pan' | 'node'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const sim = useRef<ReturnType<typeof forceSimulation<GNode>> | null>(null);
+  // Whether the last press moved: a drag must not also count as a click.
+  const lastMoved = useRef(false);
   const W = 720, H = 460;
   useEffect(() => {
-    const sim = forceSimulation(nodes)
+    const s = forceSimulation(nodes)
       .force('link', forceLink(links as { source: string; target: string }[]).id((d) => (d as GNode).id).distance(60))
       .force('charge', forceManyBody().strength(-220))
       .force('collide', forceCollide(18))
       .force('center', forceCenter(W / 2, H / 2))
       .on('tick', () => tick((n) => n + 1));
-    return () => { sim.stop(); };
+    sim.current = s;
+    return () => { s.stop(); };
   }, [nodes, links]);
-  const clamp = (v: number | undefined, max: number) => Math.max(12, Math.min(max - 12, v ?? max / 2));
+
+  const sel = new Set(selected);
+  const L = links as unknown as { source: GNode; target: GNode }[];
+  const neighbours = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const l of L) {
+      const a = l.source.id ?? (l.source as unknown as string), b = l.target.id ?? (l.target as unknown as string);
+      (m.get(a) ?? m.set(a, new Set()).get(a)!).add(b);
+      (m.get(b) ?? m.set(b, new Set()).get(b)!).add(a);
+    }
+    return m;
+  }, [L]);
+  const focus = hover ?? (selected.length === 1 && !selected[0]!.includes(' > ') ? selected[0]! : null);
+  const lit = (id: string) => !focus || id === focus || neighbours.get(focus)?.has(id) || sel.has(id);
+
+  const toGraphXY = (e: { clientX: number; clientY: number }) => {
+    const r = svg.current!.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W, py = ((e.clientY - r.top) / r.height) * H;
+    return { x: (px - view.x) / view.k, y: (py - view.y) / view.k, px, py };
+  };
+  const choose = (item: string, add: boolean) => {
+    const items = add ? (sel.has(item) ? selected.filter((x) => x !== item) : [...selected, item]) : sel.has(item) && selected.length === 1 ? [] : [item];
+    store.dispatch(items.length ? { type: 'select.set', payload: { view: v.id, items: items.join('|') } } : { type: 'select.clear', payload: {} }, 'you');
+  };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30" role="img" aria-label="graph of movies and people">
-      {(links as unknown as { source: GNode; target: GNode }[]).map((l, i) => <line key={i} x1={clamp(l.source.x, W)} y1={clamp(l.source.y, H)} x2={clamp(l.target.x, W)} y2={clamp(l.target.y, H)} className="stroke-muted-foreground/40" strokeWidth={1} />)}
-      {nodes.map((n) => (
-        <g key={n.id} transform={`translate(${clamp(n.x, W)},${clamp(n.y, H)})`}>
-          <circle r={n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree)} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[1]} />
-          {(n.type === 'movie' || n.degree > 1) && <text y={-12} textAnchor="middle" className="fill-foreground" style={{ fontSize: 10 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
+    <div className="grid gap-2">
+      <svg
+        ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
+        onWheel={(e) => { e.preventDefault(); const { px, py } = toGraphXY(e); const k = Math.max(0.3, Math.min(4, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k }); }}
+        onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'pan', sx: px, sy: py, ox: view.x, oy: view.y, moved: false }; }}
+        onPointerMove={(e) => {
+          const d = drag.current; if (!d) return;
+          const { x, y, px, py } = toGraphXY(e);
+          if (Math.abs(px - d.sx) + Math.abs(py - d.sy) > 3) d.moved = true;
+          if (d.kind === 'pan') setView((vv) => ({ ...vv, x: d.ox + px - d.sx, y: d.oy + py - d.sy }));
+          else { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = x; n.fy = y; sim.current?.alpha(0.3).restart(); } }
+        }}
+        onPointerUp={() => {
+          const d = drag.current; drag.current = null; lastMoved.current = !!d?.moved;
+          if (d?.kind === 'node') { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = null; n.fy = null; } }
+          else if (d && !d.moved && selected.length) store.dispatch({ type: 'select.clear', payload: {} }, 'you');
+        }}
+      >
+        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+          {L.map((l, i) => {
+            const key = edgeKey(l.source.id, l.target.id), on = sel.has(key), dim = !lit(l.source.id) || !lit(l.target.id);
+            return (
+              <g key={i} className="cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
+                <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke="transparent" strokeWidth={10 / view.k} />
+                <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke={on ? PALETTE[1] : 'currentColor'} className={on ? '' : 'text-muted-foreground'} strokeOpacity={on ? 1 : dim ? 0.08 : 0.35} strokeWidth={(on ? 3 : 1) / view.k} />
+              </g>
+            );
+          })}
+          {nodes.map((n) => {
+            const on = sel.has(n.id), dim = !lit(n.id);
+            const r = n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree);
+            return (
+              <g key={n.id} transform={`translate(${n.x ?? W / 2},${n.y ?? H / 2})`} className="cursor-pointer" opacity={dim ? 0.2 : 1}
+                onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
+                onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: px, sy: py, ox: 0, oy: 0, moved: false }; }}
+                onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
+                {on && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5 / view.k} />}
+                <circle r={r} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[4]} />
+                {(n.type === 'movie' || n.degree > 1 || on || n.id === hover) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
+              </g>
+            );
+          })}
         </g>
-      ))}
-    </svg>
+      </svg>
+      <p className="text-xs text-muted-foreground">Click a node or edge to select it · shift-click to add · drag to move · scroll to zoom · drag the background to pan. The agent can see what you select.</p>
+    </div>
   );
 }
 
@@ -155,7 +238,7 @@ class ViewBoundary extends Component<{ children: ReactNode; title: string }, { e
   }
 }
 
-function ViewCard({ v }: { v: View }) {
+function ViewCard({ v, store, selected }: { v: View; store: MoviesStore; selected: string[] }) {
   const { rows, ms, error } = useMemo(() => {
     const t = performance.now();
     try { return { rows: getZega()?.run(v.query) ?? [], ms: performance.now() - t, error: '' }; }
@@ -166,13 +249,20 @@ function ViewCard({ v }: { v: View }) {
       <CardHeader>
         <CardTitle>{v.title}</CardTitle>
         <CardDescription className="font-mono text-[11px] truncate" title={v.query}>{v.kind} · {rows.length} rows · zega {ms.toFixed(1)} ms</CardDescription>
+        {selected.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1" aria-label="Selected">
+            <span className="text-xs text-muted-foreground">Selected (the agent sees this):</span>
+            {selected.map((it) => <span key={it} className="rounded-md border px-1.5 py-0.5 text-xs text-foreground" style={{ borderColor: PALETTE[1] }}>{it.replace(/(^|> )(person|movie|other):/g, '$1')}</span>)}
+            <button type="button" className="text-xs underline text-muted-foreground" onClick={() => store.dispatch({ type: 'select.clear', payload: {} }, 'you')}>clear</button>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {error ? <p className="text-sm text-destructive">{error}</p>
-          : v.kind === 'bar' ? <BarView v={v} rows={rows} />
+          : v.kind === 'bar' ? <BarView v={v} rows={rows} store={store} selected={selected} />
           : v.kind === 'pie' ? <PieView v={v} rows={rows} />
           : v.kind === 'table' ? <TableView rows={rows} />
-          : <GraphView rows={rows} />}
+          : <GraphView rows={rows} v={v} store={store} selected={selected} />}
       </CardContent>
     </Card>
   );
@@ -196,7 +286,7 @@ export function MoviesView({ store }: { store: MoviesStore }) {
         <div className={cn('ui-screen bg-background text-foreground', dark && 'dark')}>
           {state.order.length === 0
             ? <p className="text-sm text-muted-foreground">Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”, “Christopher Nolan’s films”.</p>
-            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <div key={id} className={cn('min-w-0', state.views[id]!.size === 'full' && 'lg:col-span-2')}><ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} /></ViewBoundary></div>)}</div>}
+            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <div key={id} className={cn('min-w-0', state.views[id]!.size === 'full' && 'lg:col-span-2')}><ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} store={store} selected={state.selection?.view === id ? state.selection.items : []} /></ViewBoundary></div>)}</div>}
         </div>
       </div>
     </section>

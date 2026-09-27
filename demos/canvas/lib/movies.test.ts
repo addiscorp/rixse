@@ -46,3 +46,12 @@ test('placement: end, before, after, replace — decided by the agent, checked b
   assert.throws(() => place(order, 'b', 'before', 'b'), /relative to itself/);
   assert.throws(() => place(order, 'n', 'after'), /needs a target/);
 });
+
+import { hintFor } from './movies.ts';
+
+test('zega errors become exact corrections from the schema', () => {
+  const schema = 'schema {\n  type Movie {\n    title: String\n    genres: TAGGED -> Genre[]\n  }\n  type Person {\n    acted_in: CAST <- Movie[]\n  }\n}';
+  assert.equal(hintFor('error: Movie.genres does not reach name', schema), ' Fix: follow it with its arrow, type and braces — write `genres -> Genre { name }`.');
+  assert.equal(hintFor('error: Person.acted_in does not point ->', schema), ' Fix: write `acted_in <- …`.');
+  assert.equal(hintFor('error: something else', schema), '');
+});

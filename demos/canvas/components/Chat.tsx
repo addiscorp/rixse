@@ -12,7 +12,7 @@ type Model = 'gemma' | 'glm' | 'opus';
 const MODEL_LABEL: Record<Model, string> = { gemma: 'Gemma 4', glm: 'GLM 4.7 Flash', opus: 'Opus 5.5' };
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: Store<S>; wire: Wire<S>; brief: string; describe: (state: S) => string; hint: string; note: (n: Omit<Note, 'at' | 'order'>) => void }) {
+export function Chat<S>({ store, wire, brief, describe, note, hint, focus }: { store: Store<S>; wire: Wire<S>; brief: string; describe: (state: S) => string; hint: string; note: (n: Omit<Note, 'at' | 'order'>) => void; /** What "this"/"these" refer to right now (e.g. the selection), attached to the message itself. */ focus?: (state: S) => string }) {
   const [format, setFormat] = useState<Format>('wire');
   const [model, setModel] = useState<Model>('gemma');
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -20,6 +20,69 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
   const [busy, setBusy] = useState(false);
   const rejections = useRef<string[]>([]);
   const end = useRef<HTMLDivElement>(null);
+
+  /**
+   * One model round trip: send, stream, apply each action as it lands, update
+   * the assistant bubble. Returns the rejection reasons, if any.
+   */
+  async function turn(message: string, history: Turn[], opts: { focusText: string; reuseBubble: boolean; label: string }): Promise<{ say: string; failed: string[]; total: number }> {
+    const t0 = performance.now();
+    const wireText = wire.encode(store.state);
+    const jsonText = JSON.stringify(store.state);
+    const context = format === 'wire' ? wireText : jsonText;
+    note({ kind: 'agent', text: `→ ${opts.label}${MODEL_LABEL[model]}${opts.focusText ? ` · with ${opts.focusText}` : ''} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
+    const tContext = performance.now();
+    const res = await fetch('/api/agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief, message: opts.focusText ? `${message}\n(${opts.focusText})` : message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
+    });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    // Streamed: the reply and each action arrive as their own lines, and each
+    // action is applied the moment it arrives.
+    let say = '', tFirstAction = 0, tSay = 0, applyMs = 0;
+    let done: { model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } } | null = null;
+    const results: { ok: boolean; line: string }[] = [];
+    if (!opts.reuseBubble) setTurns((t) => [...t, { role: 'assistant', content: '…' }]);
+    const show = (content: string, footnote?: string) => setTurns((t) => [...t.slice(0, -1), { role: 'assistant', content, footnote }]);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let pending = '';
+    for (;;) {
+      const { done: end, value } = await reader.read();
+      if (end) break;
+      pending += dec.decode(value, { stream: true });
+      let i;
+      while ((i = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, i); pending = pending.slice(i + 1);
+        if (!line.trim()) continue;
+        const ev = JSON.parse(line) as { kind: string; say?: string; action?: { type: string; payload?: unknown }; error?: string; model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } };
+        if (ev.kind === 'say' && ev.say) { say = ev.say; if (!tSay) tSay = performance.now(); show(say); }
+        else if (ev.kind === 'action' && ev.action) {
+          if (!tFirstAction) tFirstAction = performance.now();
+          const a0 = performance.now();
+          // The model refers to items by wire handle; translate back to real ids before dispatch.
+          const a = format === 'wire' ? wire.resolve(ev.action, store.params(ev.action.type)) : ev.action;
+          const r = store.dispatch(a, 'agent', { why: message });
+          applyMs += performance.now() - a0;
+          results.push({ ok: r.ok, line: r.ok ? '' : `${a.type} ${JSON.stringify(a.payload ?? {})}: ${(r as { error: string }).error}` });
+        } else if (ev.kind === 'error') throw new Error(ev.error);
+        else if (ev.kind === 'done') done = ev;
+      }
+    }
+    const tEnd = performance.now();
+    const failed = results.filter((r) => !r.ok).map((r) => r.line);
+    rejections.current = failed;
+    const tm = done?.timing, u = done?.usage;
+    note({ kind: 'agent', text: `← ${done?.model ?? model}: ${results.length} action${results.length === 1 ? '' : 's'}${u ? ` · ${fmt(u.input)} in / ${fmt(u.output)} out tokens` : ''}` });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const tPaint = performance.now();
+      const r = (a: number, b: number) => fmt(Math.round(b - a));
+      const rate = u && tm && tm.model > 0 ? Math.round((u.output / tm.model) * 1000) : 0;
+      note({ kind: 'agent', text: `⏱ ${opts.label}first action ${tFirstAction ? r(t0, tFirstAction) : '—'} ms · reply ${tSay ? r(t0, tSay) : '—'} ms · all done ${r(t0, tPaint)} ms = context ${r(t0, tContext)} · model first token ${tm?.firstToken ?? '?'} / total ${tm ? fmt(tm.model) : '?'}${u ? ` (${fmt(u.output)} out tok, ${rate} tok/s)` : ''} · apply ${fmt(Math.round(applyMs))} · last paint ${r(tEnd, tPaint)}` });
+    }));
+    return { say, failed, total: results.length };
+  }
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -29,64 +92,23 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
     setBusy(true);
     const history = turns.map((t) => ({ role: t.role, content: t.footnote ? `${t.content}\n(${t.footnote})` : t.content }));
     setTurns([...history, { role: 'user', content: message }]);
-    const t0 = performance.now();
-    const wireText = wire.encode(store.state);
-    const jsonText = JSON.stringify(store.state);
-    const context = format === 'wire' ? wireText : jsonText;
-    note({ kind: 'agent', text: `→ ${MODEL_LABEL[model]} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
+    // The selection travels WITH the words, where the model treats it as intent, not background.
+    const focusText = focus?.(store.state) ?? '';
+    const show = (content: string, footnote?: string) => setTurns((t) => [...t.slice(0, -1), { role: 'assistant', content, footnote }]);
     try {
-      const tContext = performance.now();
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brief, message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
-      });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      // Streamed: the reply and each action arrive as their own lines, and each
-      // action is applied the moment it arrives.
-      let say = '', tFirstAction = 0, tSay = 0, applyMs = 0;
-      let done: { model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } } | null = null;
-      const results: { ok: boolean; line: string }[] = [];
-      setTurns((t) => [...t, { role: 'assistant', content: '…' }]);
-      const show = (content: string, footnote?: string) => setTurns((t) => [...t.slice(0, -1), { role: 'assistant', content, footnote }]);
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let pending = '';
-      for (;;) {
-        const { done: end, value } = await reader.read();
-        if (end) break;
-        pending += dec.decode(value, { stream: true });
-        let i;
-        while ((i = pending.indexOf('\n')) >= 0) {
-          const line = pending.slice(0, i); pending = pending.slice(i + 1);
-          if (!line.trim()) continue;
-          const ev = JSON.parse(line) as { kind: string; say?: string; action?: { type: string; payload?: unknown }; error?: string; model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } };
-          if (ev.kind === 'say' && ev.say) { say = ev.say; if (!tSay) tSay = performance.now(); show(say); }
-          else if (ev.kind === 'action' && ev.action) {
-            if (!tFirstAction) tFirstAction = performance.now();
-            const a0 = performance.now();
-            // The model refers to items by wire handle; translate back to real ids before dispatch.
-            const a = format === 'wire' ? wire.resolve(ev.action, store.params(ev.action.type)) : ev.action;
-            const r = store.dispatch(a, 'agent', { why: message });
-            applyMs += performance.now() - a0;
-            results.push({ ok: r.ok, line: r.ok ? '' : `${a.type} ${JSON.stringify(a.payload ?? {})}: ${(r as { error: string }).error}` });
-          } else if (ev.kind === 'error') throw new Error(ev.error);
-          else if (ev.kind === 'done') done = ev;
-        }
+      const first = await turn(message, history, { focusText, reuseBubble: false, label: '' });
+      let final = first;
+      // Self-correction: rejected actions go straight back to the model once,
+      // with rixse's reasons, so the user never has to say "that didn't work".
+      if (first.failed.length) {
+        note({ kind: 'agent', text: `↻ ${first.failed.length} rejected — sending the reasons back once to self-correct` });
+        const retryHistory: Turn[] = [...history, { role: 'user', content: message }, { role: 'assistant', content: first.say || '(no reply)' }];
+        final = await turn(`Your actions were rejected by rixse:\n${first.failed.map((f) => `- ${f}`).join('\n')}\nSend corrected actions for my request: "${message}". Keep the same view id.`, retryHistory, { focusText, reuseBubble: true, label: 'retry · ' });
       }
-      const tEnd = performance.now();
-      rejections.current = results.filter((r) => !r.ok).map((r) => r.line);
-      const failed = results.filter((r) => !r.ok).length;
-      // The reply was written before rixse applied anything: say plainly what did not land.
-      show(say || '(done)', failed ? `${failed} of ${results.length} change${results.length === 1 ? '' : 's'} didn't apply — see the logs.` : undefined);
-      const tm = done?.timing, u = done?.usage;
-      note({ kind: 'agent', text: `← ${done?.model ?? model}: ${results.length} action${results.length === 1 ? '' : 's'}${u ? ` · ${fmt(u.input)} in / ${fmt(u.output)} out tokens` : ''}` });
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const tPaint = performance.now();
-        const r = (a: number, b: number) => fmt(Math.round(b - a));
-        const rate = u && tm && tm.model > 0 ? Math.round((u.output / tm.model) * 1000) : 0;
-        note({ kind: 'agent', text: `⏱ first action ${tFirstAction ? r(t0, tFirstAction) : '—'} ms · reply ${tSay ? r(t0, tSay) : '—'} ms · all done ${r(t0, tPaint)} ms = context ${r(t0, tContext)} · model first token ${tm?.firstToken ?? '?'} / total ${tm ? fmt(tm.model) : '?'}${u ? ` (${fmt(u.output)} out tok, ${rate} tok/s)` : ''} · apply ${fmt(Math.round(applyMs))} · last paint ${r(tEnd, tPaint)}` });
-      }));
+      const say = final.say || first.say || '(done)';
+      if (final.failed.length) show(say, `${final.failed.length} of ${final.total} change${final.total === 1 ? '' : 's'} didn't apply — see the logs.`);
+      else show(say);
+      if (first.failed.length && !final.failed.length) note({ kind: 'agent', text: '✓ self-corrected on the retry' });
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
       note({ kind: 'error', text });

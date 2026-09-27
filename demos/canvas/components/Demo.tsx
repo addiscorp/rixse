@@ -39,6 +39,11 @@ export function Demo() {
       <div className="mode" hidden={mode !== 'movies'}>
         <Chat store={movies.store} wire={movies.wire} brief={mBrief} note={note('movies')}
           describe={(s) => `${s.order.length} views`}
+          focus={(s) => {
+            if (!s.selection?.items.length) return '';
+            const names = s.selection.items.map((i) => i.includes(' > ') ? `the link ${i.replace(/(person|movie|other):/g, '')}` : `${i.replace(/^(person|movie|other):/, '')} (${i.split(':')[0]})`);
+            return `The user has selected: ${names.join(', ')}. "this", "these", "them" and "the selected" mean exactly these, not anything from earlier turns.`;
+          }}
           hint="Ask about the 250 highest-grossing films, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”." />
         <MoviesView store={movies.store} />
         <Logs store={movies.store} notes={notes.movies} />

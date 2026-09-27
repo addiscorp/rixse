@@ -10,10 +10,12 @@ export type ViewKind = (typeof VIEW_KINDS)[number];
 export const PLACES = ['end', 'before', 'after', 'replace'] as const;
 export type Place = (typeof PLACES)[number];
 export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: 'half' | 'full' };
-export type MoviesState = { views: Record<string, View>; order: string[] };
+/** What the user (or the agent) has selected in one view: graph nodes "person:Chris Evans", edges "person:Chris Evans > movie:Avatar", or bars "Avatar". */
+export type Selection = { view: string; items: string[] };
+export type MoviesState = { views: Record<string, View>; order: string[]; selection: Selection | null };
 export type Datum = { label: string; value: number };
 
-const initial = (): MoviesState => ({ views: {}, order: [] });
+const initial = (): MoviesState => ({ views: {}, order: [], selection: null });
 
 /** Every value at a dotted path, flattening arrays on the way ("movies.gross"). */
 function at(row: unknown, path: string): unknown[] {
@@ -74,12 +76,35 @@ export function capped(data: Datum[], kind: 'bar' | 'pie'): { data: Datum[]; hid
   return { data: [...data.slice(0, cap - 1), { label: `Other (${rest.length})`, value: rest.reduce((a, d) => a + d.value, 0) }], hidden: rest.length };
 }
 
-/** Run a view's query in zega; a zega error becomes a rejection the agent can read. */
+/**
+ * A zega error, made actionable: for the mistakes models make most, the
+ * schema tells us the exact correction, so the rejection says it.
+ */
+export function hintFor(error: string, schema: string): string {
+  // "Movie.genres does not reach name": a relationship needs its type and braces.
+  const reach = error.match(/(\w+)\.(\w+) does not reach (\w+)/);
+  if (reach) {
+    const [, type, rel, field] = reach;
+    const block = schema.match(new RegExp(`type ${type} \\{([\\s\\S]*?)\\n\\s*\\}`))?.[1] ?? '';
+    const m = block.match(new RegExp(`\\b${rel}:\\s*\\w+\\s*(->|<-)\\s*(\\w+)`));
+    if (m) return ` Fix: follow it with its arrow, type and braces — write \`${rel} ${m[1]} ${m[2]} { ${field} }\`.`;
+  }
+  // "Person.acted_in does not point ->": the arrow is the other way.
+  const dir = error.match(/(\w+)\.(\w+) does not point (->|<-)/);
+  if (dir) return ` Fix: write \`${dir[2]} ${dir[3] === '->' ? '<-' : '->'} …\`.`;
+  return '';
+}
+
+/** Run a view's query in zega; a zega error becomes a rejection the agent can read and act on. */
 export function runQuery(query: string): unknown[] {
   const z = getZega();
   if (!z) throw new Rejected('the movies database is still loading; try again in a moment');
   try { return z.run(query); }
-  catch (e) { throw new Rejected(`zega rejected the query: ${String(e instanceof Error ? e.message : e).replace(/^execution error: /, '').slice(0, 400)}`); }
+  catch (e) {
+    const msg = String(e instanceof Error ? e.message : e).replace(/^execution error: /, '');
+    const first = msg.split('\n').find((l) => /error:/.test(l)) ?? msg.split('\n')[0]!;
+    throw new Rejected(`zega rejected the query: ${first.trim().slice(0, 240)}.${hintFor(msg, z.schema)}`);
+  }
 }
 
 const act = <P,>(type: string, def: Omit<ActionDef<MoviesState, P>, 'type'>) => defineAction<MoviesState, P>(type, def);
@@ -133,7 +158,9 @@ export const movieActions = [
       const placed = p.at ? place(s.order, p.id, p.at, p.target) : { order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
       const views = { ...s.views, [p.id]: view };
       if ('removed' in placed && placed.removed) delete views[placed.removed];
-      return { views, order: placed.order };
+      // A changed or removed view drops its selection: the items may no longer be on screen.
+      const selection = s.selection && views[s.selection.view] && s.selection.view !== p.id ? s.selection : null;
+      return { views, order: placed.order, selection };
     },
   }),
   act('view.move', {
@@ -159,16 +186,31 @@ export const movieActions = [
     apply: (s: MoviesState, p: { id: string }) => {
       if (!s.views[p.id]) throw new Rejected(`no view "${p.id}"`);
       const { [p.id]: _gone, ...views } = s.views;
-      return { views, order: s.order.filter((x) => x !== p.id) };
+      return { views, order: s.order.filter((x) => x !== p.id), selection: s.selection?.view === p.id ? null : s.selection };
     },
   }),
   act('view.clear', { describe: 'Remove every view.', params: {}, apply: () => initial() }),
+  act('select.set', {
+    describe: 'Select things in one view (the user does this by clicking; you may too, to point at something). Replaces the current selection.',
+    params: {
+      view: { type: 'string', ref: 'view' },
+      items: { type: 'string', describe: 'graph: "person:Name|movie:Title|person:Name > movie:Title" (nodes, and edges as "a > b"); bar: bar labels "Avatar|Titanic"' },
+    },
+    apply: (s: MoviesState, p: { view: string; items: string }) => {
+      if (!s.views[p.view]) throw new Rejected(`no view "${p.view}"`);
+      const items = [...new Set(p.items.split('|').map((x) => x.trim()).filter(Boolean))];
+      if (!items.length) throw new Rejected('select at least one item, or use select.clear');
+      return { ...s, selection: { view: p.view, items } };
+    },
+  }),
+  act('select.clear', { describe: 'Clear the selection.', params: {}, apply: (s: MoviesState) => ({ ...s, selection: null }) }),
 ];
 
 export function moviesBrief(schema: string) {
   return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
 Pick the view: bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
 Views sit in a two-column grid in order. You decide where: "at" end (default), before/after a target view, or "replace" a target (e.g. "turn that bar chart into a pie" = a new view that replaces it). size "full" spans both columns. Reuse a view's id to change it in place; view.move and view.resize rearrange.
+The user's current selection (what they clicked in a graph or chart) is in the state as "selected" rows. "this", "these", "them", "the selected ones" mean the selection: use those names in your query. You may select things yourself with select.set to point at an answer.
 Keep "say" to one short sentence.
 
 The database (ZQL schema; -> points out of a type, <- points in):
@@ -190,6 +232,9 @@ Examples:
 export function createMoviesWire() {
   return createWire<MoviesState>({
     entities: [{
+      type: 'selected', list: (s) => (s.selection ? s.selection.items.map((item) => ({ view: s.selection!.view, item })) : []),
+      fields: [{ name: 'view', ref: 'view' }, { name: 'item' }],
+    }, {
       type: 'view', list: (s) => s.order.map((id) => s.views[id]!), id: (v) => v.id,
       fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }, { name: 'size', default: 'half' }],
     }],
