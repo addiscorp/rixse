@@ -8,12 +8,14 @@
 // so the log is the record of what the agent touched, and undo works for both.
 
 /**
- * @typedef {{ type: 'string' | 'number' | 'boolean' | 'enum', values?: string[], optional?: boolean, describe?: string }} Param
+ * @typedef {{ type: 'string' | 'number' | 'boolean' | 'enum', values?: string[], optional?: boolean, describe?: string, ref?: string }} Param
  * @typedef {{ type: string, describe: string, params: Record<string, Param>, apply: (state: any, payload: any) => any }} ActionDef
  * @typedef {'you' | 'agent'} Author
  * @typedef {{ seq: number, at: number, author: Author, type: string, payload: any, why?: string, undone?: boolean }} Entry
  * @typedef {{ kind: 'applied' | 'rejected' | 'undone', entry?: Entry, action?: any, author?: Author, error?: string }} Event
  */
+
+export { createWire } from './wire.js';
 
 /** A rejection with a reason the log (and the agent) can read. Throw it from `apply`. */
 export class Rejected extends Error {}
@@ -99,6 +101,9 @@ export function createStore({ initial, actions }) {
       emit({ kind: 'applied', entry });
       return { ok: true, entry };
     },
+
+    /** An action's parameter definitions (e.g. for translating wire handles), or undefined. */
+    params(type) { return defs.get(type)?.params; },
 
     /** Undo the latest action that is still in effect, whoever made it. */
     undo() {

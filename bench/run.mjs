@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import ReactDOMServer from 'react-dom/server';
 import { createCanvasStore } from '../demos/canvas/lib/canvas.ts';
-import { createWireContext, encodeWireState, parseWireOps } from '../packages/rixse/src/wire.js';
+import { createWireContext, encodeWireState, parseWireOps } from './wire-v0.js';
 import { tasks, makeTaskState } from './tasks.ts';
 import { canvasTree } from './tree.mjs';
 import { mergeCheckpointRows } from './result-store.mjs';

@@ -24,8 +24,7 @@
     ".": {
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
-    },
-    "./wire": "./src/wire.js"
+    }
   },
   "scripts": {
     "test": "node --test test/*.test.js"

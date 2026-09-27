@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mergeCheckpointRows, newestCompleteRun } from '../../../bench/result-store.mjs';
+import { mergeCheckpointRows, newestCompleteRun } from './result-store.mjs';
 
 test('checkpoint merge replaces the updated measurement and preserves every other row', () => {
   const previous = [

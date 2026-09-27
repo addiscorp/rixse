@@ -5,27 +5,33 @@
 // zega.earth (zegadb/earth lib/ask.ts).
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 
-const MODEL = '@cf/google/gemma-4-26b-a4b-it';
+const MODELS = {
+  gemma: { label: 'Gemma 4 26B', id: '@cf/google/gemma-4-26b-a4b-it' },
+  opus: { label: 'Opus 5.5', id: 'claude-opus-5-5' },
+} as const;
+type ModelKey = keyof typeof MODELS;
+// Local demo only: Opus goes through Ava's capped proxy, so no Anthropic key is ever in this app.
+const ANTHROPIC_PROXY = 'http://127.0.0.1:8977/anthropic/v1/messages';
 const HISTORY_MAX = 8;
 const STATE_MAX = 20_000;
 
 type Turn = { role: 'user' | 'assistant'; content: string };
-type Body = { message: string; history: Turn[]; state: unknown; vocabulary: string; rejections?: string[] };
+type Body = { message: string; history: Turn[]; context: string; format: 'wire' | 'json'; legend?: string; model?: ModelKey; vocabulary: string; rejections?: string[] };
 
-function system(vocabulary: string, state: unknown, rejections: string[]) {
-  const s = JSON.stringify(state);
+function system(vocabulary: string, context: string, format: 'wire' | 'json', legend: string, rejections: string[]) {
+  const s = context;
   return `You operate a canvas of cards and arrows on behalf of the user. You change it ONLY by proposing actions from this vocabulary:
 
 ${vocabulary}
 
-The canvas is ${1200}×${800}. Current state (JSON):
+The canvas is ${1200}×${800}. Current state (${format === 'wire' ? `rixse wire. ${legend}` : 'JSON'}):
 ${s.length > STATE_MAX ? s.slice(0, STATE_MAX) + '…(truncated)' : s}
 ${rejections.length ? `\nYour previous proposal had rejected actions:\n${rejections.map((r) => `- ${r}`).join('\n')}\nFix them if they still matter.\n` : ''}
 Reply with ONE JSON object and nothing else, no code fence:
 {"say": "<one or two short sentences for the chat>", "actions": [{"type": "<action type>", "payload": {...}}]}
 Rules:
 - "say" is conversation only. Never list the data in "say"; put it on the canvas.
-- Use ids you created or that exist in the state. Reuse existing cards instead of duplicating them.
+- Refer to existing items by ${format === 'wire' ? 'their handle (c1, c2…)' : 'id'}. Give a NEW card a short descriptive slug id. Reuse existing cards instead of duplicating them.
 - If the user only chats, return "actions": [].`;
 }
 
@@ -61,30 +67,40 @@ export async function POST(request: Request) {
   if (typeof body.message !== 'string' || !body.message.trim()) {
     return Response.json({ error: 'empty message' }, { status: 400 });
   }
-  const { env } = getCloudflareContext() as unknown as { env: { AI?: { run(model: string, input: unknown): Promise<unknown> } } };
-  if (!env.AI) return Response.json({ error: 'The AI binding is missing (run with wrangler credentials).' }, { status: 503 });
-
-  const messages = [
-    { role: 'system', content: system(String(body.vocabulary ?? ''), body.state, (body.rejections ?? []).slice(0, 10)) },
-    ...(body.history ?? []).slice(-HISTORY_MAX),
-    { role: 'user', content: body.message.slice(0, 2000) },
-  ];
+  const key: ModelKey = body.model === 'opus' ? 'opus' : 'gemma';
+  const sys = system(String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
+  const turns = [...(body.history ?? []).slice(-HISTORY_MAX), { role: 'user' as const, content: body.message.slice(0, 2000) }];
   const started = Date.now();
   let raw = '';
+  let usage = { input: 0, output: 0 };
   try {
-    const result = await env.AI.run(MODEL, { messages, max_tokens: 1200, temperature: 0, chat_template_kwargs: { enable_thinking: false } });
-    raw = replyText(result);
+    if (key === 'opus') {
+      const r = await fetch(ANTHROPIC_PROXY, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODELS.opus.id, max_tokens: 1200, system: sys, messages: turns }) });
+      const j = (await r.json()) as { content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number }; error?: unknown };
+      if (!r.ok) throw new Error(`Opus via proxy: HTTP ${r.status} ${JSON.stringify(j.error ?? j).slice(0, 200)}`);
+      raw = (j.content ?? []).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
+      usage = { input: j.usage?.input_tokens ?? 0, output: j.usage?.output_tokens ?? 0 };
+    } else {
+      const { env } = getCloudflareContext() as unknown as { env: { AI?: { run(model: string, input: unknown): Promise<unknown> } } };
+      if (!env.AI) return Response.json({ error: 'The AI binding is missing (run with wrangler credentials).' }, { status: 503 });
+      const result = await env.AI.run(MODELS.gemma.id, { messages: [{ role: 'system', content: sys }, ...turns], max_tokens: 1200, temperature: 0, chat_template_kwargs: { enable_thinking: false } });
+      raw = replyText(result);
+      const u = (result as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
+      usage = { input: u?.prompt_tokens ?? 0, output: u?.completion_tokens ?? 0 };
+    }
   } catch (err) {
     return Response.json({ error: `model call failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 502 });
   }
   const ms = Date.now() - started;
   const parsed = firstJsonObject(raw) as { say?: unknown; actions?: unknown } | null;
-  if (!parsed) return Response.json({ say: raw.trim().slice(0, 500) || '(no reply)', actions: [], ms, model: MODEL, parseError: true, raw });
+  const model = MODELS[key].label;
+  if (!parsed) return Response.json({ say: raw.trim().slice(0, 500) || '(no reply)', actions: [], ms, model, usage, parseError: true, raw });
   return Response.json({
     say: typeof parsed.say === 'string' ? parsed.say : '',
     actions: Array.isArray(parsed.actions) ? parsed.actions : [],
     ms,
-    model: MODEL,
+    model,
+    usage,
     raw,
   });
 }

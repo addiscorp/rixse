@@ -1,5 +1,5 @@
 // The canvas's vocabulary: the only things the human or the agent can do to it.
-import { createStore, defineAction, Rejected, type ActionDef } from 'rixse';
+import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
 
 export type Tone = 'plain' | 'accent' | 'good' | 'warn';
 export type Card = { id: string; title: string; body: string; x: number; y: number; tone: Tone };
@@ -45,7 +45,7 @@ export const actions = [
   }),
   act('card.update', {
     describe: "Change a card's title, body or tone.",
-    params: { id: { type: 'string' }, title: { type: 'string', optional: true }, body: { type: 'string', optional: true }, tone: { type: 'enum', values: TONES, optional: true } },
+    params: { id: { type: 'string', ref: 'card' }, title: { type: 'string', optional: true }, body: { type: 'string', optional: true }, tone: { type: 'enum', values: TONES, optional: true } },
     apply: (s: CanvasState, p: Partial<Card> & { id: string }) => {
       const card = need(s, p.id);
       const next: Card = { ...card, ...(Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)) as Partial<Card>) };
@@ -54,7 +54,7 @@ export const actions = [
   }),
   act('card.move', {
     describe: 'Move a card.',
-    params: { id: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } },
+    params: { id: { type: 'string', ref: 'card' }, x: { type: 'number' }, y: { type: 'number' } },
     apply: (s: CanvasState, p: { id: string; x: number; y: number }) => {
       const card = need(s, p.id);
       return { ...s, cards: { ...s.cards, [p.id]: { ...card, x: clampX(p.x), y: clampY(p.y) } } };
@@ -62,7 +62,7 @@ export const actions = [
   }),
   act('card.remove', {
     describe: 'Remove a card and its links.',
-    params: { id: { type: 'string' } },
+    params: { id: { type: 'string', ref: 'card' } },
     apply: (s: CanvasState, p: { id: string }) => {
       need(s, p.id);
       const { [p.id]: _gone, ...cards } = s.cards;
@@ -71,7 +71,7 @@ export const actions = [
   }),
   act('link.add', {
     describe: 'Draw an arrow from one card to another.',
-    params: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string', optional: true } },
+    params: { from: { type: 'string', ref: 'card' }, to: { type: 'string', ref: 'card' }, label: { type: 'string', optional: true } },
     apply: (s: CanvasState, p: { from: string; to: string; label?: string }) => {
       need(s, p.from); need(s, p.to);
       if (p.from === p.to) throw new Rejected('a card cannot link to itself');
@@ -81,7 +81,7 @@ export const actions = [
   }),
   act('link.remove', {
     describe: 'Remove an arrow.',
-    params: { from: { type: 'string' }, to: { type: 'string' } },
+    params: { from: { type: 'string', ref: 'card' }, to: { type: 'string', ref: 'card' } },
     apply: (s: CanvasState, p: { from: string; to: string }) => {
       if (!s.links.some((l) => l.from === p.from && l.to === p.to)) throw new Rejected(`no link ${p.from} → ${p.to}`);
       return { ...s, links: s.links.filter((l) => !(l.from === p.from && l.to === p.to)) };
@@ -93,6 +93,18 @@ export const actions = [
     apply: () => ({ cards: {}, links: [] }),
   }),
 ];
+
+/** How the canvas reads to a model in rixse wire (APS 2): one schema line per type, one row per item. */
+export function createCanvasWire() {
+  return createWire<CanvasState>({
+    entities: [
+      { type: 'card', list: (s) => Object.values(s.cards), id: (c) => c.id, fields: [
+        { name: 'title' }, { name: 'at', get: (c) => [c.x, c.y] }, { name: 'tone', default: 'plain' }, { name: 'body', default: '' },
+      ] },
+      { type: 'link', list: (s) => s.links, fields: [{ name: 'from', ref: 'card' }, { name: 'to', ref: 'card' }, { name: 'label', default: '' }] },
+    ],
+  });
+}
 
 export function createCanvasStore() {
   return createStore<CanvasState>({ initial: { cards: {}, links: [] }, actions });
