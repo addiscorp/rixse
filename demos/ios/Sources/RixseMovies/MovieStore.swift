@@ -81,15 +81,7 @@ final class MovieStore: ObservableObject {
   /// What "this"/"these" refer to right now, attached to the message itself (APS 2).
   var focusText: String {
     guard let selection = state.selection, !selection.items.isEmpty else { return "" }
-    let names = selection.items.map { item -> String in
-      if item.contains(" > ") {
-        return "the link \(item.replacingOccurrences(of: #"(person|movie|other):"#, with: "", options: .regularExpression))"
-      }
-      let type = item.split(separator: ":").first.map(String.init) ?? ""
-      let name = item.replacingOccurrences(of: #"^(person|movie|other):"#, with: "", options: .regularExpression)
-      return "\(name) (\(type))"
-    }
-    return "The user has selected: \(names.joined(separator: ", ")). \"this\", \"these\", \"them\" and \"the selected\" mean exactly these, not anything from earlier turns."
+    return "\(selectionIntentText(selection)) \"this\", \"these\", \"them\" and \"the selected\" mean exactly these, not anything from earlier turns."
   }
 
   var wireContext: String { catalogue.wire.encode(state) }

@@ -41,15 +41,15 @@ private func parseEvent(_ line: String) -> AgentEvent? {
 extension MovieStore {
   /// One model round trip: send, stream, apply each action as it lands.
   /// Returns (say, rejected action lines, action count, latency line).
-  private func turn(_ message: String, history: [[String: String]], retryOf failed: [String]?) async throws -> (say: String, failed: [String], total: Int, latency: String) {
-    let t0 = Date()
+  private func turn(_ message: String, history: [[String: String]], retryOf failed: [String]?, attachSelection: Bool = true, t0: Date = Date(), latencyPrefix: String = "") async throws -> (say: String, failed: [String], total: Int, latency: String) {
     let context = wireContext
+    let focus = attachSelection ? focusText : ""
     let label = failed == nil ? "" : "retry · "
-    note(.agent, "→ \(label)\(model == "opus" ? "Opus 5.5" : "Gemma 4")\(focusText.isEmpty ? "" : " · with selection") · wire context \(context.count) chars · \(state.order.count) views")
+    note(.agent, "→ \(label)\(model == "opus" ? "Opus 5.5" : "Gemma 4")\(focus.isEmpty ? "" : " · with selection") · wire context \(context.count) chars · \(state.order.count) views")
 
     let bodyPairs: [(String, JSONValue)] = [
       ("brief", .string(brief)),
-      ("message", .string(focusText.isEmpty ? message : "\(message)\n(\(focusText))")),
+      ("message", .string(focus.isEmpty ? message : "\(message)\n(\(focus))")),
       ("history", .array(history.map { jsonObject([("role", .string($0["role"]!)), ("content", .string($0["content"]!))]) })),
       ("context", .string(context)),
       ("format", .string("wire")),
@@ -99,13 +99,16 @@ extension MovieStore {
     note(.agent, "← \(done?.model ?? model): \(results.count) action\(results.count == 1 ? "s" : "")\(usage.map { " · \($0.input) in / \($0.output) out tokens" } ?? "")")
     let totalMs = Int(Date().timeIntervalSince(t0) * 1000)
     let firstMs = tFirstAction.map { Int($0.timeIntervalSince(t0) * 1000) }
-    let latency = "⏱ \(label)first action \(firstMs.map { "\($0) ms" } ?? "—") · total \(totalMs) ms\(usage.map { " · \($0.input) in / \($0.output) out tokens" } ?? "")"
+    let latency = "⏱ \(latencyPrefix)\(label)first action \(firstMs.map { "\($0) ms" } ?? "—") · total \(totalMs) ms\(usage.map { " · \($0.input) in / \($0.output) out tokens" } ?? "")"
     note(.agent, latency)
     return (say, rejected, results.count, latency)
   }
 
   /// Send a chat message: one turn, then one self-correcting retry if rixse rejected anything.
-  func send(_ text: String) async {
+  /// Voice turns pass the speech-end time so the latency line measures
+  /// speech-end -> first action (APS 6), and carry their own selection
+  /// pairings (attachSelection: false) instead of the end selection.
+  func send(_ text: String, attachSelection: Bool = true, speechEnd: Date? = nil) async {
     let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !message.isEmpty, !busy else { return }
     busy = true
@@ -116,13 +119,13 @@ extension MovieStore {
     turns.append(ChatTurn(role: "user", content: message))
     turns.append(ChatTurn(role: "assistant", content: "…"))
     do {
-      let first = try await turn(message, history: history, retryOf: nil)
+      let first = try await turn(message, history: history, retryOf: nil, attachSelection: attachSelection, t0: speechEnd ?? Date(), latencyPrefix: speechEnd == nil ? "" : "speech-end → ")
       var final = first
       if !first.failed.isEmpty {
         note(.agent, "↻ \(first.failed.count) rejected — sending the reasons back once to self-correct")
         let retryHistory = history + [["role": "user", "content": message], ["role": "assistant", "content": first.say.isEmpty ? "(no reply)" : first.say]]
         let correction = "Your actions were rejected by rixse:\n\(first.failed.map { "- \($0)" }.joined(separator: "\n"))\nSend corrected actions for my request: \"\(message)\". Keep the same view id."
-        final = try await turn(correction, history: retryHistory, retryOf: first.failed)
+        final = try await turn(correction, history: retryHistory, retryOf: first.failed, attachSelection: attachSelection)
         if final.failed.isEmpty { note(.agent, "✓ self-corrected on the retry") }
       }
       let say = final.say.isEmpty ? first.say : final.say
