@@ -99,8 +99,8 @@ type GNode = SimulationNodeDatum & { id: string; label: string; type: 'movie' | 
 /** Rows → a graph: every object with a title or name is a node; nesting is an edge. */
 function toGraph(rows: unknown[]) {
   const nodes = new Map<string, GNode>();
-  const links: { source: string; target: string }[] = [];
-  const visit = (o: unknown, parent: string | null) => {
+  const links: { source: string; target: string; rel: string }[] = [];
+  const visit = (o: unknown, parent: string | null, rel = '') => {
     if (!o || typeof o !== 'object') return;
     const r = o as Record<string, unknown>;
     const label = String(r.title ?? r.name ?? '');
@@ -109,9 +109,9 @@ function toGraph(rows: unknown[]) {
       const type = r.title !== undefined ? 'movie' : r.name !== undefined ? 'person' : 'other';
       id = `${type}:${label}`;
       if (!nodes.has(id)) nodes.set(id, { id, label, type, degree: 0 });
-      if (parent && parent !== id) { links.push({ source: parent, target: id }); nodes.get(parent)!.degree++; nodes.get(id)!.degree++; }
+      if (parent && parent !== id) { links.push({ source: parent, target: id, rel }); nodes.get(parent)!.degree++; nodes.get(id)!.degree++; }
     }
-    for (const v of Object.values(r)) if (Array.isArray(v)) v.forEach((x) => visit(x, id));
+    for (const [k, v] of Object.entries(r)) if (Array.isArray(v)) v.forEach((x) => visit(x, id, k));
   };
   rows.forEach((r) => visit(r, null));
   // With several movies, the story is who they share: drop people linked to only one.
@@ -142,7 +142,12 @@ const PHYS_ROWS: { key: keyof Phys; label: string; min: number; max: number; ste
 ];
 /** A stable phase per node, so each one bobs on its own rhythm (zega's drift). */
 const phaseOf = (id: string) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0; return (Math.abs(h) % 1000) / 1000 * 6.283; };
-const radiusOf = (n: GNode) => (n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree));
+// zega's node geometry: every plain node is a circle of radius 22 (node-display.js).
+const R = 22;
+const radiusOf = (_n: GNode) => R;
+// zega's label palette, assigned per node type in order of first appearance (graph.js).
+const ZEGA_PALETTE = ['#8dd3c7', '#bebada', '#fb8072', '#80b1d3', '#fdb462', '#b3de69', '#fccde5', '#bc80bd', '#ccebc5', '#ffed6f', '#a6cee3', '#fdbf6f'];
+const EDGE = '#9a9aa4';
 /** zega's fade for what is not lit: 20% and a small blur. */
 const DIM = { opacity: 0.2, filter: 'blur(1.4px)' };
 
@@ -177,8 +182,9 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     setView({ k, x: (W - w * k) / 2 - minX * k, y: (H - h * k) / 2 - minY * k });
   };
   const fitRef = useRef(fit); fitRef.current = fit;
-  const W = 720, H = 460;
+  const W = 800, H = 480; // zega's viewBox
   useEffect(() => { setPhys(loadPhys()); }, []);
+  const colorOf = useMemo(() => { const m = new Map<string, string>(); for (const n of nodes) if (!m.has(n.type)) m.set(n.type, ZEGA_PALETTE[m.size % ZEGA_PALETTE.length]!); return (t: string) => m.get(t)!; }, [nodes]);
 
   useEffect(() => {
     const base = -Math.max(140, 45 * Math.sqrt(nodes.length));
@@ -260,7 +266,7 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     <div className="grid gap-2">
       <div className="relative">
         <svg
-          ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
+          ref={svg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
           onWheel={(e) => { e.preventDefault(); interacted.current = true; const { px, py } = toGraphXY(e); zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, px, py); }}
           onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'pan', sx: px, sy: py, ox: view.x, oy: view.y, moved: false }; }}
           onPointerMove={(e) => {
@@ -278,13 +284,19 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
           }}
         >
           <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+            <defs><marker id={`arrow-${v.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={EDGE} /></marker></defs>
             {L.map((l, i) => {
               const a = at(l.source), b = at(l.target);
+              // Stop the line at the circle's edge so the arrow is visible (zega's outline).
+              const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+              const x1 = a.x + ux * R, y1 = a.y + uy * R, x2 = b.x - ux * (R + 2), y2 = b.y - uy * (R + 2);
               const key = edgeKey(l.source.id, l.target.id), on = sel.has(key), bright = lit(l.source.id) && lit(l.target.id);
+              const rel = (l as unknown as { rel?: string }).rel;
               return (
                 <g key={i} className="cursor-pointer" style={bright || on ? undefined : DIM} onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10 / view.k} />
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={on ? PALETTE[1] : 'currentColor'} className={on ? '' : 'text-muted-foreground'} strokeOpacity={on ? 1 : 0.4} strokeWidth={(on ? 3 : 1) / view.k} />
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={on ? PALETTE[1] : EDGE} strokeWidth={on ? 2.5 : 1.4} markerEnd={`url(#arrow-${v.id})`} />
+                  {rel && L.length <= 100 && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 3} textAnchor="middle" fontSize={10} fill="#77777f" className="pointer-events-none">{rel}</text>}
                 </g>
               );
             })}
@@ -296,9 +308,9 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
                   onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const q = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: q.px, sy: q.py, ox: 0, oy: 0, moved: false }; }}
                   onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
                   <title>{n.label}</title>
-                  {(on || touched) && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5 / view.k} />}
-                  <circle r={r} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[4]} />
-                  {(n.type === 'movie' || n.degree > 1 || on) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
+                  {(on || touched) && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5} />}
+                  <circle r={r} fill={colorOf(n.type)} stroke="var(--border)" strokeWidth={on ? 2.5 : 1} />
+                  <text dy={r + 17} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 11.5, fontWeight: on ? 600 : 400 }}>{n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}</text>
                 </g>
               );
             })}
