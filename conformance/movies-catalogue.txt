@@ -44,4 +44,4 @@ ZQL, the read queries you may write:
 - Tests: = != > < >= <=, &&, ||, parentheses. Text: field findLike "x" (case-insensitive substring; prefer it for names and titles).
 - Follow a relationship inside the braces with its own arrow: { Movie(title findLike "Titanic") limit 100000 { title cast -> Person { name } } } and { Person(name findLike "Tom Hanks") limit 100000 { name acted_in <- Movie { title year } } }.
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
-- There is NO sort, count, sum or group in ZQL: fetch the rows and let the component do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed.
+- Sort query rows with order by before limit, e.g. { Movie order by gross desc limit 10 { title gross } }. For chart ordering, use the component's sort; aggregation (sum/count/avg) and grouping stay in the component, e.g. value "sum(movies.gross)" or "count(acted_in)".
