@@ -23,7 +23,7 @@ function BarView({ v, rows, store, selected }: { v: View; rows: unknown[]; store
   const isMoney = /gross/.test(v.value);
   const config = { value: { label: v.value || 'value', color: PALETTE[0] } } satisfies ChartConfig;
   return (
-    <>
+    <div className="relative">
     <ChartContainer config={config} className="w-full" style={{ height: Math.max(180, data.length * 30 + 20) }}>
       <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
         <CartesianGrid horizontal={false} />
@@ -41,7 +41,8 @@ function BarView({ v, rows, store, selected }: { v: View; rows: unknown[]; store
       </BarChart>
     </ChartContainer>
     {hidden > 0 && <p className="text-xs text-muted-foreground mt-2">Showing the first {data.length} of {data.length + hidden}. Ask for a limit to change it.</p>}
-  </>
+    <SelectionOverlay selected={selected} store={store} />
+  </div>
   );
 }
 
@@ -127,6 +128,18 @@ function toGraph(rows: unknown[]) {
 
 const edgeKey = (a: string, b: string) => `${a} > ${b}`;
 
+/** What is selected, overlaid in the bottom-left corner of a chart: it never moves the layout. */
+function SelectionOverlay({ selected, store }: { selected: string[]; store: MoviesStore }) {
+  if (!selected.length) return null;
+  return (
+    <div className="pointer-events-auto absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5 rounded-md border bg-background/90 px-2 py-1 text-xs text-foreground shadow-sm backdrop-blur-sm" aria-label="Selected">
+      <span className="text-muted-foreground">Selected</span>
+      {selected.map((it) => <span key={it} className="rounded border px-1.5 py-0.5" style={{ borderColor: PALETTE[1] }}>{it.replace(/(^|> )(person|movie|other):/g, '$1')}</span>)}
+      <button type="button" className="underline text-muted-foreground" onClick={() => store.dispatch({ type: 'select.clear', payload: {} }, 'you')}>clear</button>
+    </div>
+  );
+}
+
 // Layout physics, ported from zega's explorer graph (zegadb/zega browser/graph.js):
 // same defaults, ranges and charge scaling. Remembered per viewer.
 type Phys = { repulsion: number; linkDist: number; pad: number; gravity: number; /** how many hops around a selected node stay lit */ hops: number };
@@ -160,7 +173,6 @@ const DIM = { opacity: 0.2, filter: 'blur(1.4px)' };
  */
 function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; store: MoviesStore; selected: string[] }) {
   const { nodes, links } = useMemo(() => toGraph(rows), [rows]);
-  const [, frame] = useState(0);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [phys, setPhys] = useState<Phys>(PHYS_DEFAULTS);
   const [panel, setPanel] = useState(false);
@@ -169,8 +181,8 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
   const sim = useRef<ReturnType<typeof forceSimulation<GNode>> | null>(null);
   // Whether the last press moved: a drag must not also count as a click.
   const lastMoved = useRef(false);
-  // zega's fit: frame the whole graph while the layout runs and when it
-  // settles, unless the reader has zoomed, panned or dragged since.
+  // zega's fit: frame the whole graph once the layout is settled (and again after a
+  // drag settles), unless the reader has zoomed, panned or dragged since.
   const interacted = useRef(false);
   const fit = () => {
     const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
@@ -196,10 +208,13 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
       .force('x', forceX(W / 2).strength(phys.gravity / 100))
       .force('y', forceY(H / 2).strength(phys.gravity / 100))
       .alphaDecay(nodes.length > 60 ? 0.012 : 0.0228);
-    let ticks = 0;
     interacted.current = false;
-    // Keep the graph framed while the layout spreads out (every 8 ticks), until the reader takes over.
-    s.on('tick.fit', () => { if (!interacted.current && ticks++ % 8 === 0) fitRef.current(); });
+    // Settle the layout before it is shown (no visible explosion or re-zooming on load):
+    // run the physics to rest now — a few tens of ms for a graph this size — then fit once.
+    s.stop();
+    const steps = Math.min(400, Math.ceil(Math.log(s.alphaMin()) / Math.log(1 - s.alphaDecay())));
+    s.tick(steps);
+    requestAnimationFrame(() => fitRef.current());
     s.on('end.fit', () => { if (!interacted.current) fitRef.current(); });
     sim.current = s;
     return () => { s.stop(); };
@@ -222,17 +237,14 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
   }, [phys.repulsion, phys.linkDist, phys.pad, phys.gravity, nodes.length]);
   useEffect(() => { savePhys(phys); }, [phys]);
 
-  // Buoyancy: one animation loop draws every frame (the layout plus zega's drift).
-  useEffect(() => {
-    let raf = 0;
-    const loop = () => { frame((n) => (n + 1) % 1e6); raf = requestAnimationFrame(loop); };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  const t = performance.now() / 1000;
-  const at = (n: GNode) => {
+  // The latest selection state, read by the motion loop (declared before anything that reads it).
+  const live = useRef<{ litSet: Set<string> | null; sel: Set<string> }>({ litSet: null, sel: new Set() });
+  const at = (n: GNode, t = performance.now() / 1000) => {
     if (!Number.isFinite(n.x)) return { x: W / 2, y: H / 2 };
-    if (n.fx != null) return { x: n.x!, y: n.y! };
+    // Pinned nodes, and faded ones while something is selected, hold still: a still
+    // blurred layer costs the browser nothing per frame; a moving one is re-blurred.
+    const cur = live.current;
+    if (n.fx != null || (cur.litSet && !cur.litSet.has(n.id) && !cur.sel.has(n.id))) return { x: n.x!, y: n.y! };
     const ph = phaseOf(n.id);
     return { x: n.x! + Math.sin(t * 0.7 + ph) * 3.2, y: n.y! + Math.cos(t * 0.5 + ph * 1.4) * 4.4 };
   };
@@ -248,10 +260,11 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     }
     return m;
   }, [L]);
-  // Only node selections fade the rest (zega's blur); an edge selection just highlights the edge.
   const selNodes = selected.filter((i) => !i.includes(' > '));
+  // Selected edges, as [from, to] node ids ("a > b").
+  const selEdges = selected.filter((i) => i.includes(' > ')).map((i) => i.split(' > ') as [string, string]);
   const litSet = useMemo(() => {
-    if (!selNodes.length) return null;
+    if (!selNodes.length && !selEdges.length) return null;
     // Everything within phys.hops links of a selected node stays lit (0 = only the selection).
     const seen = new Set(selNodes);
     let frontier = selNodes;
@@ -260,8 +273,11 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
       for (const id of frontier) for (const nb of neighbours.get(id) ?? []) if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
       frontier = next;
     }
+    // A selected edge lights just its two ends, so the edge itself stands out.
+    for (const [a, b] of selEdges) { seen.add(a); seen.add(b); }
     return seen;
-  }, [selNodes.join('|'), phys.hops, neighbours]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected.join('|'), phys.hops, neighbours]);
   const lit = (id: string) => !litSet || litSet.has(id);
 
   const toGraphXY = (e: { clientX: number; clientY: number }) => {
@@ -274,6 +290,74 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     const items = add ? (sel.has(item) ? selected.filter((x) => x !== item) : [...selected, item]) : sel.has(item) && selected.length === 1 ? [] : [item];
     store.dispatch(items.length ? { type: 'select.set', payload: { view: v.id, items: items.join('|') } } : { type: 'select.clear', payload: {} }, 'you');
   };
+
+  const edge = (l: { source: GNode; target: GNode }, i: number) => {
+    const a = at(l.source), b = at(l.target);
+    // Stop the line at the circle's edge so the arrow is visible (zega's outline).
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    const x1 = a.x + ux * R, y1 = a.y + uy * R, x2 = b.x - ux * (R + 2), y2 = b.y - uy * (R + 2);
+    const key = edgeKey(l.source.id, l.target.id), on = sel.has(key);
+    const rel = (l as unknown as { rel?: string }).rel;
+    return (
+      <g key={`e${i}`} data-e={i} className="cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={on ? PALETTE[1] : EDGE} strokeWidth={on ? 2.5 : 1.4} markerEnd={`url(#arrow-${v.id})`} />
+        {rel && L.length <= 100 && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 3} textAnchor="middle" fontSize={10} fill="#77777f" className="pointer-events-none">{rel}</text>}
+      </g>
+    );
+  };
+  const node = (n: GNode) => {
+    const on = sel.has(n.id), p = at(n), r = radiusOf(n);
+    const touched = !on && selected.some((i) => i.includes(' > ') && (i.startsWith(n.id + ' > ') || i.endsWith(' > ' + n.id)));
+    return (
+      <g key={n.id} data-n={n.id} transform={`translate(${p.x},${p.y})`} className="cursor-pointer"
+        onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const q = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: q.px, sy: q.py, ox: 0, oy: 0, moved: false }; }}
+        onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
+        <title>{n.label}</title>
+        {(on || touched) && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5} />}
+        <circle r={r} fill={colorOf(n.type)} stroke="var(--border)" strokeWidth={on ? 2.5 : 1} />
+        <text dy={r + 17} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 11.5, fontWeight: on ? 600 : 400 }}>{n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}</text>
+      </g>
+    );
+  };
+  const edgeLit = (l: { source: GNode; target: GNode }) => !litSet || sel.has(edgeKey(l.source.id, l.target.id)) || (selNodes.length > 0 && lit(l.source.id) && lit(l.target.id));
+  const nodeLit = (n: GNode) => sel.has(n.id) || lit(n.id);
+  // zega's fade, drawn as ONE blurred layer under the lit one: one filter, not hundreds.
+  const faded = useMemo(
+    () => (litSet ? <g data-layer="faded" style={DIM}>{L.filter((l) => !edgeLit(l)).map(edge)}{nodes.filter((n) => !nodeLit(n)).map(node)}</g> : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [litSet, selected.join('|'), L, nodes],
+  );
+
+  // Motion without React (zega's approach): React builds the graph when data, selection,
+  // zoom or settings change; this loop only writes positions, every frame. Faded elements
+  // hold still once the layout is at rest, so the blurred layer is not re-blurred.
+  live.current = { litSet, sel };
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      const root = svg.current; if (!root) return;
+      const t = performance.now() / 1000;
+      const hot = !!sim.current && sim.current.alpha() > sim.current.alphaMin();
+      const pos = new Map<string, { x: number; y: number }>();
+      for (const n of nodes) pos.set(n.id, at(n, t));
+      root.querySelectorAll<SVGGElement>(hot ? '[data-n]' : '[data-layer="lit"] [data-n]').forEach((g) => {
+        const q = pos.get(g.dataset.n!); if (q) g.setAttribute('transform', `translate(${q.x},${q.y})`);
+      });
+      root.querySelectorAll<SVGGElement>(hot ? '[data-e]' : '[data-layer="lit"] [data-e]').forEach((g) => {
+        const l = L[Number(g.dataset.e)]; if (!l) return;
+        const a = pos.get(l.source.id), b = pos.get(l.target.id); if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+        const x1 = a.x + ux * R, y1 = a.y + uy * R, x2 = b.x - ux * (R + 2), y2 = b.y - uy * (R + 2);
+        g.querySelectorAll('line').forEach((ln) => { ln.setAttribute('x1', String(x1)); ln.setAttribute('y1', String(y1)); ln.setAttribute('x2', String(x2)); ln.setAttribute('y2', String(y2)); });
+        const tx = g.querySelector('text'); if (tx) { tx.setAttribute('x', String((x1 + x2) / 2)); tx.setAttribute('y', String((y1 + y2) / 2 - 3)); }
+      });
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, L]);
 
   return (
     <div className="grid gap-2">
@@ -298,35 +382,8 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
         >
           <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
             <defs><marker id={`arrow-${v.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={EDGE} /></marker></defs>
-            {L.map((l, i) => {
-              const a = at(l.source), b = at(l.target);
-              // Stop the line at the circle's edge so the arrow is visible (zega's outline).
-              const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-              const x1 = a.x + ux * R, y1 = a.y + uy * R, x2 = b.x - ux * (R + 2), y2 = b.y - uy * (R + 2);
-              const key = edgeKey(l.source.id, l.target.id), on = sel.has(key), bright = lit(l.source.id) && lit(l.target.id);
-              const rel = (l as unknown as { rel?: string }).rel;
-              return (
-                <g key={i} className="cursor-pointer" style={bright || on ? undefined : DIM} onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={on ? PALETTE[1] : EDGE} strokeWidth={on ? 2.5 : 1.4} markerEnd={`url(#arrow-${v.id})`} />
-                  {rel && L.length <= 100 && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 3} textAnchor="middle" fontSize={10} fill="#77777f" className="pointer-events-none">{rel}</text>}
-                </g>
-              );
-            })}
-            {nodes.map((n) => {
-              const on = sel.has(n.id), p = at(n), r = radiusOf(n);
-              const touched = !on && selected.some((i) => i.includes(' > ') && (i.startsWith(n.id + ' > ') || i.endsWith(' > ' + n.id)));
-              return (
-                <g key={n.id} transform={`translate(${p.x},${p.y})`} className="cursor-pointer" style={lit(n.id) || on ? undefined : DIM}
-                  onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const q = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: q.px, sy: q.py, ox: 0, oy: 0, moved: false }; }}
-                  onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
-                  <title>{n.label}</title>
-                  {(on || touched) && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5} />}
-                  <circle r={r} fill={colorOf(n.type)} stroke="var(--border)" strokeWidth={on ? 2.5 : 1} />
-                  <text dy={r + 17} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 11.5, fontWeight: on ? 600 : 400 }}>{n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}</text>
-                </g>
-              );
-            })}
+            {faded}
+            <g data-layer="lit">{L.filter(edgeLit).map(edge)}{nodes.filter(nodeLit).map(node)}</g>
           </g>
         </svg>
         <div className="absolute right-2 top-2 flex flex-col gap-1">
@@ -335,6 +392,7 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
           <button type="button" title="zoom in" onClick={() => { interacted.current = true; zoomBy(1.12); }} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">+</button>
           <button type="button" title="zoom out" onClick={() => { interacted.current = true; zoomBy(1 / 1.12); }} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">−</button>
         </div>
+        <SelectionOverlay selected={selected} store={store} />
         {panel && (
           <div className="absolute right-11 top-2 w-60 rounded-lg border bg-background/95 p-3 shadow-sm grid gap-2 text-xs text-foreground" role="group" aria-label="Layout physics">
             {PHYS_ROWS.map((row) => (
@@ -358,7 +416,7 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">Click a node to select it and fade the rest · click an edge to highlight it · shift-click to add · click the background to clear · drag to move · scroll or +/− to zoom · ⤢ fit · ⚙ layout. The agent can see what you select.</p>
+      <p className="text-xs text-muted-foreground">Click a node or edge to select it and fade the rest · shift-click to add · click the background to clear · the agent sees the selection (bottom left) · drag to move · scroll or +/− to zoom · ⤢ fit · ⚙ layout. The agent can see what you select.</p>
     </div>
   );
 }
@@ -384,13 +442,6 @@ function ViewCard({ v, store, selected }: { v: View; store: MoviesStore; selecte
       <CardHeader>
         <CardTitle>{v.title}</CardTitle>
         <CardDescription className="font-mono text-[11px] truncate" title={v.query}>{v.kind} · {rows.length} rows · zega {ms.toFixed(1)} ms</CardDescription>
-        {selected.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1" aria-label="Selected">
-            <span className="text-xs text-muted-foreground">Selected (the agent sees this):</span>
-            {selected.map((it) => <span key={it} className="rounded-md border px-1.5 py-0.5 text-xs text-foreground" style={{ borderColor: PALETTE[1] }}>{it.replace(/(^|> )(person|movie|other):/g, '$1')}</span>)}
-            <button type="button" className="text-xs underline text-muted-foreground" onClick={() => store.dispatch({ type: 'select.clear', payload: {} }, 'you')}>clear</button>
-          </div>
-        )}
       </CardHeader>
       <CardContent>
         {error ? <p className="text-sm text-destructive">{error}</p>
