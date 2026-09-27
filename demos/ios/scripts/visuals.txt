@@ -1,0 +1,4 @@
+# Visual-verification run: the two chart kinds the acceptance sequence leaves
+# below the fold — the graph alone after step 1, the line after step 2.
+send show the movies Robert Downey Jr. and Scarlett Johansson are both in as a graph
+send box office over the years for superhero movies

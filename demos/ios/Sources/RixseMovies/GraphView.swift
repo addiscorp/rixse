@@ -167,7 +167,7 @@ struct GraphComponent: View {
             context.fill(Path(ellipseIn: rect), with: .color(colorOf(node.type)))
             context.stroke(Path(ellipseIn: rect), with: .color(on ? .orange : .secondary), lineWidth: on ? 2.5 : 1)
             let label = node.label.count > 22 ? String(node.label.prefix(21)) + "…" : node.label
-            context.draw(Text(label).font(.system(size: 10)), at: CGPoint(x: p.x, y: p.y + r + 12), anchor: .center)
+            context.draw(Text(label).font(.system(size: max(8, 11 * settled.scale))), at: CGPoint(x: p.x, y: p.y + r + 10 * settled.scale), anchor: .center)
           }
         }
         .contentShape(Rectangle())
@@ -231,24 +231,32 @@ struct GraphComponent: View {
 }
 
 /// The settled graph for one canvas size: positions with the fit transform
-/// already applied, so drawing and hit-testing always agree.
+/// already applied, so drawing and hit-testing always agree. The layout runs
+/// in the web demo's virtual 800×480 space and scales down to the canvas, so
+/// nodes and labels come out the same apparent size as on the web.
 private struct SettledGraph {
   var graph: (nodes: [GNode], links: [GLink])
   var positions: [String: CGPoint]
   var scale: Double
 }
 
+private let GRAPH_SPACE = CGSize(width: 800, height: 480)
+
 private func settle(rows: [JSONValue], size: CGSize) -> SettledGraph {
   let graph = toGraph(rows)
-  let pos = forceLayout(nodes: graph.nodes, links: graph.links, size: size)
+  let pos = forceLayout(nodes: graph.nodes, links: graph.links, size: GRAPH_SPACE)
   let xs = pos.values.map(\.x), ys = pos.values.map(\.y)
   guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
     return SettledGraph(graph: graph, positions: [:], scale: 1)
   }
-  let w = max(maxX - minX + 120, 1), h = max(maxY - minY + 120, 1)
-  let scale = min(size.width / w, size.height / h, 1.4)
-  let ox = (size.width - w * scale) / 2 - (minX - 60) * scale
-  let oy = (size.height - h * scale) / 2 - (minY - 60) * scale
+  // Fit the laid-out bounds with no zoom-in cap: at phone widths the scale
+  // lands near the web demo's viewBox shrink, so nodes and labels come out
+  // the same apparent size as on the web.
+  let margin = 90.0
+  let w = max(maxX - minX + margin * 2, 1), h = max(maxY - minY + margin * 2, 1)
+  let scale = min(size.width / w, size.height / h)
+  let ox = (size.width - w * scale) / 2 - (minX - margin) * scale
+  let oy = (size.height - h * scale) / 2 - (minY - margin) * scale
   var out: [String: CGPoint] = [:]
   for (id, p) in pos {
     out[id] = CGPoint(x: p.x * scale + ox, y: p.y * scale + oy)
