@@ -158,6 +158,7 @@ struct LineComponent: View {
   var body: some View {
     let v = ViewSpec(item)
     let data = lineData(rows, v)
+    let ticks = yearTicks(data.xs)
     let isMoney = v.value.contains("gross")
     // The web maps xs[0]…xs[-1] onto its own scale; Swift Charts' automatic
     // domain rounds year-magnitude values to nonsense, so pin it here.
@@ -237,6 +238,11 @@ struct LineComponent: View {
         }
       }
       .chartXScale(domain: xDomain)
+      // VoiceOver (and the acceptance check) reads the axis from the same
+      // strings the ticks draw; Charts' own data-point elements stay inside.
+      .accessibilityElement(children: .contain)
+      .accessibilityLabel("\(item.title): line chart, x axis \(ticks.map(yearTickText).joined(separator: " "))")
+      .accessibilityIdentifier("lineXAxis-\(item.id)")
       .chartYAxis {
         AxisMarks { value in
           AxisValueLabel {
@@ -246,10 +252,13 @@ struct LineComponent: View {
         }
       }
       .chartXAxis {
-        AxisMarks { value in
+        // Explicit round-year ticks with plain-integer labels ("2010", never
+        // "2,010"): on this SDK the value casts come back empty and Charts'
+        // default label groups the thousands, so fall back to the tick list.
+        AxisMarks(values: ticks) { value in
           AxisValueLabel {
-            if let n = value.as(Double.self) { Text("\(Int(n))").font(.caption2) }
-            else if let n = value.as(Int.self) { Text("\(n)").font(.caption2) }
+            let x = value.as(Double.self) ?? (value.index < ticks.count ? ticks[value.index] : 0)
+            Text(yearTickText(x)).font(.caption2)
           }
         }
       }

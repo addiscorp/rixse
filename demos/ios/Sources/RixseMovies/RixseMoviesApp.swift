@@ -63,7 +63,7 @@ struct ContentView: View {
           }
         }
         .safeAreaInset(edge: .bottom) {
-          ChatBar()
+          VoiceBar()
         }
         .sheet(isPresented: $showLogs) {
           LogsView()
