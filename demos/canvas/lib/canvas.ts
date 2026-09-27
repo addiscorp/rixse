@@ -29,7 +29,7 @@ export const actions = [
   act('card.add', {
     describe: 'Add a card. Omit x/y to place it automatically.',
     params: {
-      id: { type: 'string', describe: 'short unique slug, e.g. "q3-revenue"' },
+      id: { type: 'string', describe: 'a new short unique slug naming this card' },
       title: { type: 'string' },
       body: { type: 'string', optional: true },
       x: { type: 'number', optional: true, describe: `0–${WIDTH}` },
