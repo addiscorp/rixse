@@ -1,0 +1,42 @@
+[
+  {
+    "def": {
+      "describe": "d",
+      "sizes": []
+    },
+    "error": "component \"x\" needs at least one size",
+    "kind": "x",
+    "name": "no sizes"
+  },
+  {
+    "def": {
+      "describe": "d"
+    },
+    "error": "component \"x\" needs at least one size",
+    "kind": "x",
+    "name": "sizes missing"
+  },
+  {
+    "def": {
+      "describe": "d",
+      "sizes": [
+        "huge"
+      ]
+    },
+    "error": "component \"x\": unknown size \"huge\"",
+    "kind": "x",
+    "name": "unknown size"
+  },
+  {
+    "def": {
+      "describe": "d",
+      "size": "large",
+      "sizes": [
+        "small"
+      ]
+    },
+    "error": "component \"x\": default size \"large\" is not one of its sizes",
+    "kind": "x",
+    "name": "default size not one of its sizes"
+  }
+]

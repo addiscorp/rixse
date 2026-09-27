@@ -1,0 +1,8 @@
+Components (sizes: viewport = the whole width, large = a big tile, medium = a wide tile, small = a small tile; * marks the usual size). The page lays them out; you choose kind, params, size and where it goes relative to the others.
+- stat [small*|medium] reads db: one number
+    params: value: string
+- bar [medium|large*|viewport] reads db: compare
+    params: label?: string = "title"; value: string
+- note [small*]: text
+## Source "db"
+tiny
