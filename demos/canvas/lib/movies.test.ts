@@ -64,3 +64,18 @@ test('stat: one number; caption is the one real name, else the view title', () =
   assert.deepEqual(statOf([{ name: 'x', movies: [{}, {}, {}] }], { label: 'name', value: 'count(movies)', title: 'Films' }), { value: 3, caption: 'x' });
   assert.equal(statOf([{ title: 'a' }], { label: 'title', value: 'gross', title: 't' }), null);
 });
+
+import { lineData } from './movies.ts';
+
+test('line: nested rows become series by year; gaps are joined, not zeroed; drops compare real points', () => {
+  const rows = [
+    { name: 'superhero', movies: [{ year: 2018, gross: 60 }, { year: 2018, gross: 8 }, { year: 2019, gross: 51 }, { year: 2021, gross: 28 }, { year: 2023, gross: 8 }] },
+    { name: 'drama', movies: [{ year: 2019, gross: 5 }] },
+  ];
+  const d = lineData(rows, { label: 'name', x: 'movies.year', value: 'sum(movies.gross)', flag: 'drops', threshold: 25, limit: 0 });
+  assert.deepEqual(d.xs, [2018, 2019, 2020, 2021, 2022, 2023]);
+  assert.deepEqual(d.series[0], { name: 'superhero', points: [{ x: 2018, y: 68 }, { x: 2019, y: 51 }, { x: 2021, y: 28 }, { x: 2023, y: 8 }] });
+  // the two biggest drops between real points: 2021→2023 (−71%) and 2019→2021 (−45%); no fake −100% into empty years
+  assert.deepEqual(d.flags.filter((f) => f.series === 'superhero').map((f) => [f.x, f.pct]), [[2023, -71], [2021, -45]]);
+  assert.equal(lineData(rows, { label: 'name', x: 'movies.year', value: 'sum(movies.gross)', flag: 'none', threshold: 0, limit: 0 }).flags.length, 0);
+});

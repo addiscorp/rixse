@@ -8,7 +8,7 @@ import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, f
 import { useRixseState } from 'rixse-react';
 import { loadZega, getZega } from '@/lib/zega';
 import { Component, type ReactNode } from 'react';
-import { capped, series, statOf, type MoviesStore, type View } from '@/lib/movies';
+import { capped, lineData, series, statOf, type MoviesStore, type View } from '@/lib/movies';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
@@ -28,6 +28,133 @@ function StatView({ v, rows }: { v: View; rows: unknown[] }) {
     <div className="grid gap-1 py-2">
       <span className="text-4xl font-semibold tracking-tight tabular-nums text-foreground">{isMoney ? money(stat.value) : isYear ? String(Math.round(stat.value)) : fmt(stat.value, false)}</span>
       <span className="text-sm text-muted-foreground">{stat.caption}{isMoney ? ' · worldwide box office' : ''}</span>
+    </div>
+  );
+}
+
+// ── The story chart ─────────────────────────────────────────────────────────
+const LINE_COLORS = ['#f0845e', '#3cc49a', '#e8ecef', '#6d9bff', '#c49bff'];
+/** A smooth path through the points (Catmull-Rom as cubic Béziers), never overshooting below zero. */
+function smooth(pts: { x: number; y: number }[], floor: number) {
+  if (pts.length < 2) return '';
+  let d = `M${pts[0]!.x},${pts[0]!.y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i]!, p1 = pts[i]!, p2 = pts[i + 1]!, p3 = pts[i + 2] ?? p2;
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: Math.min(floor, p1.y + (p2.y - p0.y) / 6) };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: Math.min(floor, p2.y - (p3.y - p1.y) / 6) };
+    d += ` C${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`;
+  }
+  return d;
+}
+
+/**
+ * Change over time, with the story drawn on it: a dashed baseline at each series'
+ * first value, callouts at the biggest drops/rises (computed from the data), the
+ * agent's notes at years, the latest value at each line's end, a side panel, and a
+ * "now" marker that follows the selection (click a year).
+ */
+function LineView({ v, rows, store, selected }: { v: View; rows: unknown[]; store: MoviesStore; selected: string[] }) {
+  const data = useMemo(() => lineData(rows, v), [rows, v]);
+  const isMoney = /gross/.test(v.value);
+  const f = (n: number) => (isMoney ? money(n) : fmt(n, false));
+  const W = 820, H = 340, padL = 56, padR = 96, padT = 34, padB = 30;
+  const xs = data.xs;
+  const maxY = Math.max(1, ...data.series.flatMap((s) => s.points.map((p) => p.y)));
+  const niceMax = (() => { const e = 10 ** Math.floor(Math.log10(maxY)); const m = Math.ceil(maxY / e); return (m <= 2 ? 2 : m <= 5 ? 5 : 10) * e * (m <= 2 ? m / 2 : m <= 5 ? m / 5 : m / 10) || maxY; })();
+  const top = Math.ceil(maxY / (niceMax / 4)) * (niceMax / 4) || maxY;
+  const X = (x: number) => padL + (xs.length > 1 ? ((x - xs[0]!) / (xs.at(-1)! - xs[0]!)) * (W - padL - padR) : 0);
+  const Y = (y: number) => padT + (1 - y / top) * (H - padT - padB);
+  const floorY = Y(0);
+  const ticksY = [0, 1, 2, 3, 4].map((i) => (top / 4) * i);
+  const stepX = Math.max(1, Math.ceil(xs.length / 8));
+  const focus = selected.map((i) => i.match(/^x:(\d+)$/)?.[1]).find(Boolean);
+  const focusX = focus ? Number(focus) : null;
+  const notes = v.notes.split('|').map((n) => { const [x, ...t] = n.split(':'); return { x: Number(x), text: t.join(':').trim() }; }).filter((n) => Number.isFinite(n.x) && n.text && xs.includes(n.x));
+  const [drawn, setDrawn] = useState(false);
+  useEffect(() => { const id = requestAnimationFrame(() => setDrawn(true)); return () => cancelAnimationFrame(id); }, [v.query, v.value, v.x, v.label]);
+  const pick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const nearest = xs.reduce((a, x) => (Math.abs(X(x) - px) < Math.abs(X(a) - px) ? x : a), xs[0]!);
+    const item = `x:${nearest}`;
+    store.dispatch(selected.includes(item) ? { type: 'select.clear', payload: {} } : { type: 'select.set', payload: { view: v.id, items: item } }, 'you');
+  };
+  const last = (s: { points: { x: number; y: number }[] }) => s.points.at(-1)!;
+  const peak = (s: { points: { x: number; y: number }[] }) => Math.max(...s.points.map((p) => p.y));
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+      <div className="relative min-w-0">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto cursor-crosshair select-none" role="img" aria-label={`${v.title}: line chart`} onClick={pick}>
+          <defs>
+            {data.series.map((s, i) => (
+              <linearGradient key={s.name} id={`fill-${v.id}-${i}`} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={LINE_COLORS[i % LINE_COLORS.length]} stopOpacity={0.16} />
+                <stop offset="100%" stopColor={LINE_COLORS[i % LINE_COLORS.length]} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          {ticksY.map((t) => <g key={t}><line x1={padL} x2={W - padR} y1={Y(t)} y2={Y(t)} className="stroke-muted-foreground/15" /><text x={padL - 10} y={Y(t) + 4} textAnchor="end" className="fill-muted-foreground" fontSize={11}>{f(t)}</text></g>)}
+          {xs.filter((_, i) => (i % stepX === 0 && xs.length - 1 - i >= Math.ceil(stepX / 2)) || i === xs.length - 1).map((x) => <text key={x} x={X(x)} y={H - 8} textAnchor="middle" className="fill-muted-foreground" fontSize={11}>{x}</text>)}
+          {notes.map((n) => <g key={`n${n.x}`}><line x1={X(n.x)} x2={X(n.x)} y1={padT - 6} y2={floorY} className="stroke-muted-foreground/40" strokeDasharray="2 4" /><text x={X(n.x) + 5} y={padT - 12} className="fill-muted-foreground" fontSize={10.5}>{n.text}</text></g>)}
+          {data.series.map((s, i) => {
+            const c = LINE_COLORS[i % LINE_COLORS.length]!;
+            const pts = s.points.map((p) => ({ x: X(p.x), y: Y(p.y) }));
+            const path = smooth(pts, floorY);
+            const base = s.points.find((p) => p.y > 0)!;
+            return (
+              <g key={s.name}>
+                <line x1={padL} x2={W - padR} y1={Y(base.y)} y2={Y(base.y)} stroke={c} strokeOpacity={0.35} strokeDasharray="5 5" />
+                <path d={`${path} L${pts.at(-1)!.x},${floorY} L${pts[0]!.x},${floorY} Z`} fill={`url(#fill-${v.id}-${i})`} opacity={drawn ? 1 : 0} style={{ transition: 'opacity .9s ease .4s' }} />
+                <path d={path} fill="none" stroke={c} strokeWidth={2.4} strokeLinecap="round" pathLength={1} strokeDasharray="1" strokeDashoffset={drawn ? 0 : 1} style={{ transition: 'stroke-dashoffset 1.2s ease-out' }} />
+                <circle cx={pts.at(-1)!.x} cy={pts.at(-1)!.y} r={4} fill={c} />
+                <text x={pts.at(-1)!.x + 10} y={pts.at(-1)!.y + 4} fill={c} fontSize={13} fontWeight={600}>{f(last(s).y)}</text>
+              </g>
+            );
+          })}
+          {(() => { const placed: { x: number; y: number; w: number }[] = []; return data.flags.map((fl) => {
+            const x = X(fl.x), y = Y(fl.to), up = fl.pct > 0;
+            const label = `${up ? '▲' : '▼'} ${Math.abs(fl.pct)}% ${up ? 'rise' : 'drop'}`;
+            const w = label.length * 6.6 + 16, bx = Math.min(W - padR - w, Math.max(padL, x + 10));
+            // Stack upward until the pill clears every pill already placed.
+            let by = Math.max(4, y - 34);
+            while (placed.some((q) => bx < q.x + q.w + 4 && q.x < bx + w + 4 && Math.abs(q.y - by) < 26)) by -= 26;
+            by = Math.max(4, by); placed.push({ x: bx, y: by, w });
+            return (
+              <g key={`${fl.series}${fl.x}`} opacity={drawn ? 1 : 0} style={{ transition: 'opacity .5s ease 1.1s' }}>
+                <circle cx={x} cy={y} r={9} fill="#e5484d" opacity={0.25} />
+                <circle cx={x} cy={y} r={4.5} fill="#e5484d" stroke="var(--background)" strokeWidth={1.5} />
+                <rect x={bx} y={by} width={w} height={22} rx={11} fill="#e5484d" fillOpacity={0.14} stroke="#e5484d" strokeOpacity={0.7} />
+                <text x={bx + w / 2} y={by + 15} textAnchor="middle" fill="#ff8f8f" fontSize={11.5} fontWeight={600}>{label}</text>
+              </g>
+            );
+          }); })()}
+          {focusX !== null && xs.includes(focusX) && (
+            <g>
+              <line x1={X(focusX)} x2={X(focusX)} y1={padT - 4} y2={floorY} stroke="#6d9bff" strokeWidth={1.5} />
+              <rect x={X(focusX) - 24} y={padT - 26} width={48} height={20} rx={5} fill="#6d9bff" fillOpacity={0.18} stroke="#6d9bff" />
+              <text x={X(focusX)} y={padT - 12} textAnchor="middle" fill="#9dbbff" fontSize={11.5} fontWeight={600}>{focusX}</text>
+            </g>
+          )}
+        </svg>
+        <SelectionOverlay selected={selected.map((i) => i.replace(/^x:/, 'year '))} store={store} top />
+      </div>
+      <div className="grid content-start gap-2" aria-label="Series summary">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{focusX ? `In ${focusX}` : 'Latest vs peak'}</span>
+        {data.series.map((s, i) => {
+          const y = focusX !== null ? (s.points.find((p) => p.x === focusX)?.y ?? 0) : last(s).y;
+          const pk = peak(s), change = pk > 0 ? Math.round(((y - pk) / pk) * 100) : 0;
+          return (
+            <div key={s.name} className="flex items-center gap-2.5 rounded-lg border px-3 py-2" style={{ background: change <= -25 ? 'color-mix(in srgb, #e5484d 10%, transparent)' : undefined }}>
+              <i className="size-2.5 shrink-0 rounded-full" style={{ background: LINE_COLORS[i % LINE_COLORS.length] }} />
+              <span className="grid min-w-0 flex-1"><span className="truncate text-sm font-medium text-foreground">{s.name}</span><span className="text-xs tabular-nums text-muted-foreground">{f(y)}</span></span>
+              {change !== 0 && <span className="shrink-0 rounded-md border px-1.5 py-0.5 text-xs tabular-nums" style={{ borderColor: change < 0 ? '#e5484d' : '#3cc49a', color: change < 0 ? '#ff8f8f' : '#6fe0b6' }}>{change > 0 ? '+' : ''}{change}%</span>}
+            </div>
+          );
+        })}
+        <span className="pt-2 text-xs text-muted-foreground">Changes flagged</span>
+        <span className="text-3xl font-semibold tabular-nums text-foreground">{data.flags.length}<span className="text-base text-muted-foreground"> / {data.series.length}</span></span>
+        <span className="text-[11px] leading-snug text-muted-foreground">Every number here is computed from zega's rows; the agent chose what to show and where to look.</span>
+      </div>
     </div>
   );
 }
@@ -143,10 +270,10 @@ function toGraph(rows: unknown[]) {
 const edgeKey = (a: string, b: string) => `${a} > ${b}`;
 
 /** What is selected, overlaid in the bottom-left corner of a chart: it never moves the layout. */
-function SelectionOverlay({ selected, store }: { selected: string[]; store: MoviesStore }) {
+function SelectionOverlay({ selected, store, top = false }: { selected: string[]; store: MoviesStore; top?: boolean }) {
   if (!selected.length) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5 rounded-md border bg-background/90 px-2 py-1 text-xs text-foreground shadow-sm backdrop-blur-sm" aria-label="Selected">
+    <div className={`pointer-events-auto absolute ${top ? 'top-0' : 'bottom-2'} left-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5 rounded-md border bg-background/90 px-2 py-1 text-xs text-foreground shadow-sm backdrop-blur-sm`} aria-label="Selected">
       <span className="text-muted-foreground">Selected</span>
       {selected.map((it) => <span key={it} className="rounded border px-1.5 py-0.5" style={{ borderColor: PALETTE[1] }}>{it.replace(/(^|> )(person|movie|other):/g, '$1')}</span>)}
       <button type="button" className="underline text-muted-foreground" onClick={() => store.dispatch({ type: 'select.clear', payload: {} }, 'you')}>clear</button>
@@ -460,6 +587,7 @@ function ViewCard({ v, store, selected }: { v: View; store: MoviesStore; selecte
       <CardContent>
         {error ? <p className="text-sm text-destructive">{error}</p>
           : v.kind === 'stat' ? <StatView v={v} rows={rows} />
+          : v.kind === 'line' ? <LineView v={v} rows={rows} store={store} selected={selected} />
           : v.kind === 'bar' ? <BarView v={v} rows={rows} store={store} selected={selected} />
           : v.kind === 'pie' ? <PieView v={v} rows={rows} />
           : v.kind === 'table' ? <TableView rows={rows} />

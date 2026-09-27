@@ -5,11 +5,12 @@
 import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
 import { getZega } from './zega.ts';
 
-export const VIEW_KINDS = ['stat', 'bar', 'pie', 'table', 'graph'] as const;
+export const VIEW_KINDS = ['stat', 'bar', 'line', 'pie', 'table', 'graph'] as const;
 export type ViewKind = (typeof VIEW_KINDS)[number];
 export const PLACES = ['end', 'before', 'after', 'replace'] as const;
 export type Place = (typeof PLACES)[number];
-export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: 'half' | 'full' };
+export const FLAGS = ['none', 'drops', 'rises', 'both'] as const;
+export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: 'half' | 'full'; x: string; flag: (typeof FLAGS)[number]; threshold: number; notes: string };
 /** What the user (or the agent) has selected in one view: graph nodes "person:Chris Evans", edges "person:Chris Evans > movie:Avatar", or bars "Avatar". */
 export type Selection = { view: string; items: string[] };
 export type MoviesState = { views: Record<string, View>; order: string[]; selection: Selection | null };
@@ -78,6 +79,74 @@ export function statOf(rows: unknown[], v: Pick<View, 'label' | 'value' | 'title
   const value = how === 'avg' ? vals.reduce((a, b) => a + b, 0) / vals.length : how === 'max' ? Math.max(...vals) : how === 'min' ? Math.min(...vals) : vals.reduce((a, b) => a + b, 0);
   const names = [...new Set(rows.map((r) => labelOf(r, v.label)).filter((l) => l && !/^[\d.,\s]+$/.test(l)))];
   return { value, caption: names.length === 1 ? names[0]! : v.title };
+}
+
+export type LinePoint = { x: number; y: number };
+export type LineSeries = { name: string; points: LinePoint[] };
+export type LineFlag = { series: string; x: number; from: number; to: number; pct: number };
+export type LineData = { series: LineSeries[]; flags: LineFlag[]; xs: number[] };
+
+/**
+ * Rows → line series for a chart the model does not draw. label names each series
+ * ("name"), x and value are paths that may reach into a nested list ("movies.year",
+ * "sum(movies.gross)"): each nested item gives a point, grouped per (series, x) by the
+ * value's aggregate. The axis spans whole years; each series has points only where it has
+ * data (the line joins across gaps), and changes compare consecutive real points. Drops or
+ * rises of at least `threshold` percent are found here, from the data: the callouts'
+ * numbers are computed, never written by the model.
+ */
+export function lineData(rows: unknown[], v: Pick<View, 'label' | 'x' | 'value' | 'flag' | 'threshold' | 'limit'>): LineData {
+  const m = v.value.trim().match(AGG);
+  const fn = m?.[1] ?? 'sum';
+  const valuePath = m ? m[2]! : v.value.trim();
+  const xPath = v.x.trim() || 'year';
+  const common = (a: string, b: string) => { const pa = a.split('.'), pb = b.split('.'); let i = 0; while (i < pa.length - 1 && i < pb.length - 1 && pa[i] === pb[i]) i++; return pa.slice(0, i).join('.'); };
+  const prefix = common(xPath, valuePath || xPath);
+  const strip = (path: string) => (prefix ? path.slice(prefix.length + 1) : path);
+  const groups = new Map<string, Map<number, number[]>>();
+  const agg = (ys: number[]) => fn === 'avg' ? ys.reduce((a, b) => a + b, 0) / ys.length : fn === 'max' ? Math.max(...ys) : fn === 'min' ? Math.min(...ys) : ys.reduce((a, b) => a + b, 0);
+  for (const row of rows) {
+    const name = labelOf(row, v.label) || 'total';
+    const items = prefix ? at(row, prefix).filter((i) => i && typeof i === 'object') : [row];
+    const g = groups.get(name) ?? groups.set(name, new Map()).get(name)!;
+    for (const it of items) {
+      const x = Number(at(it, strip(xPath))[0]);
+      if (!Number.isFinite(x) || x === 0) continue;
+      const y = fn === 'count' ? 1 : Number(at(it, strip(valuePath))[0]);
+      if (!Number.isFinite(y)) continue;
+      (g.get(x) ?? g.set(x, []).get(x)!).push(y);
+    }
+  }
+  let allX = [...new Set([...groups.values()].flatMap((g) => [...g.keys()]))].sort((a, b) => a - b);
+  // Trim a long, near-empty lead-in: start where some series first reaches 10% of the overall peak
+  // (one step earlier, so the rise is visible). The story is where the data is.
+  const totalAt = (x: number) => Math.max(0, ...[...groups.values()].map((g) => (g.has(x) ? agg(g.get(x)!) : 0)));
+  const overall = Math.max(0, ...allX.map(totalAt));
+  const firstBig = allX.findIndex((x) => totalAt(x) >= overall * 0.2);
+  if (firstBig > 1) allX = allX.slice(firstBig - 1);
+  const whole = allX.every((x) => Number.isInteger(x));
+  const xs = whole && allX.length ? Array.from({ length: allX.at(-1)! - allX[0]! + 1 }, (_, i) => allX[0]! + i) : allX;
+  // Only years with data are points; the line joins across gaps. (A year missing from a
+  // top-N dataset means "none made the list", not zero — drawing it as zero would lie.)
+  const lo = xs[0] ?? -Infinity;
+  let series: LineSeries[] = [...groups].map(([name, g]) => ({ name, points: [...g.keys()].filter((x) => x >= lo).sort((a, b) => a - b).map((x) => ({ x, y: agg(g.get(x)!) })) }))
+    .filter((s) => s.points.some((p) => p.y > 0))
+    .sort((a, b) => b.points.reduce((t, p) => t + p.y, 0) - a.points.reduce((t, p) => t + p.y, 0));
+  series = series.slice(0, v.limit > 0 ? v.limit : 5);
+  const flags: LineFlag[] = [];
+  const th = (v.threshold > 0 ? v.threshold : 25) / 100;
+  if (v.flag && v.flag !== 'none') {
+    for (const s of series) {
+      const peakOf = Math.max(...s.points.map((p) => p.y));
+      // The biggest qualifying change per series (at most two), so the chart tells a story, not a list.
+      const changes = s.points.slice(1).map((p, i) => ({ x: p.x, from: s.points[i]!.y, to: p.y, pct: s.points[i]!.y > 0 ? (p.y - s.points[i]!.y) / s.points[i]!.y : 0 }))
+        // A change only counts from a meaningful level: at least 15% of the series' peak.
+        .filter((c) => c.from >= peakOf * 0.15 && (v.flag === 'both' || (v.flag === 'drops' ? c.pct <= -th : c.pct >= th)) && Math.abs(c.pct) >= th)
+        .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 2);
+      for (const c of changes) flags.push({ series: s.name, x: c.x, from: c.from, to: c.to, pct: Math.round(c.pct * 100) });
+    }
+  }
+  return { series, flags, xs };
 }
 
 /** What a chart actually draws: at most CAP items; a pie folds the rest into "Other". */
@@ -157,15 +226,23 @@ export const movieActions = [
       sort: { type: 'string', optional: true, describe: '"value desc" (default), "value asc" or "label asc"' },
       limit: { type: 'number', optional: true, describe: 'keep the first N after sorting' },
       size: { type: 'enum', values: ['half', 'full'], optional: true, describe: 'half (default) or full width' },
+      x: { type: 'string', optional: true, describe: 'line: the x-axis field path, e.g. "movies.year" (label names each series, value its y)' },
+      flag: { type: 'enum', values: FLAGS, optional: true, describe: 'line: mark the biggest drops/rises; the chart computes the % from the data' },
+      threshold: { type: 'number', optional: true, describe: 'line: minimum change in percent to flag (default 25)' },
+      notes: { type: 'string', optional: true, describe: 'line: context at x values, "2020:Theaters close|2012:The Avengers opens" (words only; no numbers)' },
       ...PLACE_PARAMS,
     },
     apply: (s: MoviesState, p: Partial<View> & { id: string; kind: ViewKind; title: string; query: string; at?: Place; target?: string }) => {
       const rows = runQuery(p.query);
       if (!rows.length) throw new Rejected('the query ran but returned no rows; loosen the filter (findLike folds case) or check the names');
-      const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0, size: p.size ?? s.views[p.id]?.size ?? 'half' };
+      const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0, size: p.size ?? s.views[p.id]?.size ?? (p.kind === 'line' ? 'full' : 'half'), x: p.x ?? '', flag: p.flag ?? 'none', threshold: p.threshold ?? 0, notes: p.notes ?? '' };
       if (p.kind === 'stat' && !statOf(rows, view)) {
         const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
         throw new Rejected(`value "${view.value}" gives no number; the rows have fields: ${keys}`);
+      }
+      if (p.kind === 'line' && !lineData(rows, view).series.length) {
+        const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
+        throw new Rejected(`x "${view.x}" and value "${view.value}" give no points; the rows have fields: ${keys} (for per-genre years use label "name", x "movies.year", value "sum(movies.gross)")`);
       }
       if ((p.kind === 'bar' || p.kind === 'pie') && !series(rows, view).length) {
         const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
@@ -225,7 +302,7 @@ export const movieActions = [
 
 export function moviesBrief(schema: string) {
   return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
-Pick the view: stat for a single number ("how much did this make", "how many films", "what year"; value is the field or count(...), label names what it is), bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
+Pick the view: line for change over time (years): series are labels, x a year path, value summed per year; set flag "drops" to have the chart mark the big falls, and notes for context at a year; stat for a single number ("how much did this make", "how many films", "what year"; value is the field or count(...), label names what it is), bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
 Views sit in a two-column grid in order. You decide where: "at" end (default), before/after a target view, or "replace" a target (e.g. "turn that bar chart into a pie" = a new view that replaces it). size "full" spans both columns. Reuse a view's id to change it in place; view.move and view.resize rearrange.
 The user's current selection (what they clicked in a graph or chart) is in the state as "selected" rows. "this", "these", "them", "the selected ones" mean the selection: use those names in your query. You may select things yourself with select.set to point at an answer.
 Keep "say" to one short sentence.
@@ -240,6 +317,7 @@ ZQL, the read queries you may write:
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
 - There is NO sort, count, sum or group in ZQL: fetch the rows and let the view do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed (e.g. label "year", value "gross" gives one bar per year).
 Examples:
+- Box office over time for a few genres, with the big drops flagged: kind line, query { Genre(name = "superhero" || name = "science fiction") limit 100000 { name movies <- Movie { year gross } } }, label "name", x "movies.year", value "sum(movies.gross)", flag "drops", notes "2020:Theaters close".
 - One film's box office: kind stat, query { Movie(title findLike "Titanic") limit 100000 { title gross } }, label "title", value "gross".
 - Top 10 by box office: kind bar, query { Movie limit 100000 { title gross } }, label "title", value "gross", limit 10.
 - Box office by genre: kind pie, query { Genre limit 100000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
@@ -254,7 +332,7 @@ export function createMoviesWire() {
       fields: [{ name: 'view', ref: 'view' }, { name: 'item' }],
     }, {
       type: 'view', list: (s) => s.order.map((id) => s.views[id]!), id: (v) => v.id,
-      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }, { name: 'size', default: 'half' }],
+      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }, { name: 'size', default: 'half' }, { name: 'x', default: '' }, { name: 'flag', default: 'none' }, { name: 'threshold', default: 0 }, { name: 'notes', default: '' }],
     }],
   });
 }
