@@ -17,6 +17,9 @@ targets:
         buildPhase: resources
         excludes:
           - "zega_wasm*"
+      - path: scripts
+        type: folder
+        buildPhase: resources
     info:
       path: Support/Info.plist
       properties:
@@ -42,3 +45,13 @@ targets:
         product: Rixse
       - framework: vendor/ZegaEngine.xcframework
         embed: true
+  RixseMoviesUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: RixseMovies

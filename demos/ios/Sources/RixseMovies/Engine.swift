@@ -21,14 +21,14 @@ final class Zega {
     var description: String { message }
   }
 
-  private let handle: UnsafeMutablePointer<ZegaHandle>
+  private let handle: OpaquePointer
   /// The full samples document (schema, unique, mutations) — passed to run, like the web demo.
   let source: String
   /// The `schema { … }` text the model sees (same slice as the web demo computes).
   let schema: String
   let loadMs: Int
 
-  private init(handle: UnsafeMutablePointer<ZegaHandle>, source: String, schema: String, loadMs: Int) {
+  private init(handle: OpaquePointer, source: String, schema: String, loadMs: Int) {
     self.handle = handle
     self.source = source
     self.schema = schema

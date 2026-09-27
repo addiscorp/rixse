@@ -14,7 +14,7 @@ struct LogsView: View {
           ForEach(movies.log.reversed(), id: \.seq) { entry in
             HStack(alignment: .top, spacing: 8) {
               Image(systemName: entry.undone ? "arrow.uturn.backward" : "checkmark.circle")
-                .foregroundStyle(entry.undone ? .secondary : .green)
+                .foregroundStyle(entry.undone ? Color.secondary : Color.green)
                 .accessibilityHidden(true)
               VStack(alignment: .leading, spacing: 2) {
                 Text("#\(entry.seq) \(entry.type) — \(entry.author.rawValue)")

@@ -55,15 +55,16 @@ struct MoviesCatalogue {
     let components = [
       try defineComponent("stat", ComponentDef(
         describe: "ONE number shown large: how much, how many, what year. Several rows are summed (or as the value says).",
-        sizes: ["small", "medium"], source: "zega", identity: ["query", "value"],
-        params: Params([("label", LABEL), ("value", VALUE)]),
+        sizes: ["small", "medium"], params: Params([("label", LABEL), ("value", VALUE)]),
+        source: "zega", identity: ["query", "value"],
         check: { rows, item in
           statOf(rows, ViewSpec(item)) != nil ? nil : "value \"\(item.extra["value"]?.stringValue ?? "")\" gives no number; the rows have fields: \(fieldsList(rows))"
         })),
       try defineComponent("bar", ComponentDef(
         describe: "compare amounts across things (box office, counts); use limit, e.g. 10–20.",
-        sizes: ["medium", "large", "viewport"], size: "medium", source: "zega", identity: ["query", "label", "value", "sort", "limit"],
+        sizes: ["medium", "large", "viewport"], size: "medium",
         params: Params([("label", LABEL), ("value", VALUE), ("sort", SORT), ("limit", LIMIT)]),
+        source: "zega", identity: ["query", "label", "value", "sort", "limit"],
         select: "bar labels, \"Avatar|Titanic\"",
         check: { rows, item in
           let v = ViewSpec(item)
@@ -71,15 +72,15 @@ struct MoviesCatalogue {
         })),
       try defineComponent("pie", ComponentDef(
         describe: "shares of a whole; shows 7 slices plus Other.",
-        sizes: ["medium", "large"], source: "zega", identity: ["query", "label", "value"],
-        params: Params([("label", LABEL), ("value", VALUE), ("sort", SORT), ("limit", LIMIT)]),
+        sizes: ["medium", "large"], params: Params([("label", LABEL), ("value", VALUE), ("sort", SORT), ("limit", LIMIT)]),
+        source: "zega", identity: ["query", "label", "value"],
         check: { rows, item in
           let v = ViewSpec(item)
           return !series(rows, v).isEmpty ? nil : "value \"\(v.value)\" gives no numbers for label \"\(v.label)\"; the rows have fields: \(fieldsList(rows))"
         })),
       try defineComponent("line", ComponentDef(
         describe: "change over time (years): series are labels, x a year path, value summed per year. The chart computes and flags the big changes itself.",
-        sizes: ["large", "viewport"], size: "viewport", source: "zega", identity: ["query", "label", "x", "value"],
+        sizes: ["large", "viewport"], size: "viewport",
         params: Params([
           ("label", LABEL), ("value", VALUE), ("limit", LIMIT),
           ("x", Param(type: .string, describe: "the x-axis field path, e.g. \"movies.year\"")),
@@ -87,6 +88,7 @@ struct MoviesCatalogue {
           ("threshold", Param(type: .number, describe: "minimum change in percent to flag (default 25)", default: .number(0))),
           ("notes", Param(type: .string, describe: "context at x values, \"2020:Theaters close|2012:The Avengers opens\" (words only)", default: .string(""))),
         ]),
+        source: "zega", identity: ["query", "label", "x", "value"],
         select: "a year, \"x:2019\"",
         check: { rows, item in
           let v = ViewSpec(item)

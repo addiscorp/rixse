@@ -71,16 +71,23 @@ struct BarComponent: View {
       .chartYAxis {
         AxisMarks { _ in AxisValueLabel().font(.caption) }
       }
+      .chartYScale(domain: Array(data.map(\.label).reversed()))
       .chartOverlay { proxy in
         Rectangle().fill(.clear).contentShape(Rectangle())
           .onTapGesture { location in
-            // The bar nearest the tap, by category position on the y axis.
-            guard let frame = proxy.plotFrame else { return }
-            let plot = proxy[frame]
-            guard plot.contains(location) else { return }
-            let slot = plot.height / Double(data.count)
-            let index = min(data.count - 1, max(0, Int((location.y - plot.minY) / max(slot, 1))))
-            let label = data[index].label
+            // Snap to the bar whose band is nearest the tap, using the first
+            // and last band centers so axis insets don't matter.
+            guard !data.isEmpty else { return }
+            let label: String
+            if data.count > 1,
+               let y0 = proxy.position(forY: data.first!.label),
+               let y1 = proxy.position(forY: data.last!.label) {
+              let step = (y1 - y0) / Double(data.count - 1)
+              let index = min(data.count - 1, max(0, Int(((location.y - y0) / max(step, 0.0001)).rounded())))
+              label = data[index].label
+            } else {
+              label = data[0].label
+            }
             let action: Action = selected.contains(label) && selected.count == 1
               ? Action("select.clear")
               : Action("select.set", payload: jsonObject([("view", .string(item.id)), ("items", .string(label))]))
@@ -236,12 +243,8 @@ struct LineComponent: View {
       .chartOverlay { proxy in
         Rectangle().fill(.clear).contentShape(Rectangle())
           .onTapGesture { location in
-            guard let frame = proxy.plotFrame else { return }
-            let plot = proxy[frame]
-            guard plot.contains(location), !data.xs.isEmpty else { return }
-            let span = data.xs.last! - data.xs.first!
-            let fraction = (location.x - plot.minX) / max(plot.width, 1)
-            let raw = data.xs.first! + span * fraction
+            guard !data.xs.isEmpty,
+                  let raw: Double = proxy.value(atX: location.x, as: Double.self) else { return }
             let nearest = data.xs.min(by: { abs($0 - raw) < abs($1 - raw) })!
             let sel = "x:\(Int(nearest))"
             let action: Action = selected.contains(sel)
@@ -282,18 +285,25 @@ struct TableComponent: View {
     return jsText(v)
   }
 
-  var body: some View {
-    let flat = flat
+  /// Column order: title/name first, the rest in first-seen order, capped at 6.
+  private var cols: [String] {
     let rank: (String) -> Int = { $0 == "title" || $0 == "name" ? 0 : 1 }
     var seen = Set<String>()
-    var cols: [String] = []
+    var all: [String] = []
     for r in flat {
       for k in r.keys where !seen.contains(k) {
         seen.insert(k)
-        cols.append(k)
+        all.append(k)
       }
     }
-    cols = cols.sorted { rank($0) < rank($1) }.prefix(6).map { $0 }
+    return all.enumerated().sorted { a, b in
+      let ra = rank(a.element), rb = rank(b.element)
+      return ra == rb ? a.offset < b.offset : ra < rb
+    }.prefix(6).map(\.element)
+  }
+
+  var body: some View {
+    let flat = flat
     ScrollView([.horizontal, .vertical]) {
       Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
         GridRow {

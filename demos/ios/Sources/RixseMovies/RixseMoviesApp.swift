@@ -68,6 +68,17 @@ struct ContentView: View {
         .sheet(isPresented: $showLogs) {
           LogsView()
         }
+        .task {
+          let args = ProcessInfo.processInfo.arguments
+          guard let i = args.firstIndex(of: "-script"), args.count > i + 1 else { return }
+          await movies.runScript(named: args[i + 1])
+        }
+        .background(
+          Text(movies.scriptStatus)
+            .accessibilityIdentifier("scriptStatus")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+        )
     }
   }
 }

@@ -27,6 +27,8 @@ final class MovieStore: ObservableObject {
   @Published var turns: [ChatTurn] = []
   @Published var busy = false
   @Published var model = "gemma"
+  /// Script progress, mirrored to a hidden view so UI tests can wait on it.
+  @Published var scriptStatus = ""
 
   let catalogue: MoviesCatalogue
   let engine: Zega
