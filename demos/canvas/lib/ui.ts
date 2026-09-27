@@ -7,7 +7,7 @@ import { createStore, createWire, defineAction, Rejected, type ActionDef } from 
 
 export const CONTAINERS = ['stack', 'grid', 'card'] as const;
 // Leaves are shadcn/ui components (plus a few compositions of them); icons are lucide names.
-export const LEAVES = ['heading', 'text', 'button', 'badge', 'input', 'switch', 'avatar', 'separator', 'progress', 'alert', 'table', 'skeleton', 'icon', 'image', 'metric', 'list', 'chart'] as const;
+export const LEAVES = ['spacer', 'heading', 'text', 'button', 'badge', 'input', 'switch', 'avatar', 'separator', 'progress', 'alert', 'table', 'skeleton', 'icon', 'image', 'metric', 'list', 'chart'] as const;
 export const KINDS = [...CONTAINERS, ...LEAVES];
 export type Kind = 'screen' | (typeof KINDS)[number];
 
@@ -46,7 +46,7 @@ export const uiActions = [
       id: { type: 'string', describe: 'a new short descriptive slug' },
       parent: { type: 'string', ref: 'node', describe: `a stack, grid, card, or "${ROOT}"` },
       kind: { type: 'enum', values: KINDS },
-      text: { type: 'string', optional: true, describe: 'heading/text/button/badge label; card: its title; input: placeholder; switch: its label; avatar: a person\'s name; progress: 0–100; alert: "title|description"; table: "col,col;cell,cell;cell,cell" (first row is the header); icon: a lucide icon name (shopping-cart, search, user, bell, menu, heart, star, settings, house, mail, plus, chevron-right…); image: alt text; metric: "label|value|delta"; list: "item|item|item"; chart: "3,5,4,8,6"' },
+      text: { type: 'string', optional: true, describe: 'spacer: none (it takes the free space in its row or column, pushing what follows to the far end); heading/text/button/badge label; card: its title; input: placeholder; switch: its label; avatar: a person\'s name; progress: 0–100; alert: "title|description"; table: "col,col;cell,cell;cell,cell" (first row is the header); icon: a lucide icon name (shopping-cart, search, user, bell, menu, heart, star, settings, house, mail, plus, chevron-right…); image: alt text; metric: "label|value|delta"; list: "item|item|item"; chart: "3,5,4,8,6"' },
       variant: { type: 'string', optional: true, describe: 'heading: h1|h2|h3; button: default|secondary|outline|ghost|destructive; badge: default|secondary|outline|destructive; alert: default|destructive; metric delta: up|down' },
       index: { type: 'number', optional: true },
       ...LAYOUT,
@@ -110,7 +110,11 @@ export const uiActions = [
 
 export const UI_BRIEF = `You build and edit an app screen for the user. The screen is a tree of nodes under the root "${ROOT}". Containers (stack, grid, card) hold children in order; everything else is a leaf.
 Layout is intent only — dir, align, justify, gap, cols, grow — and the platform lays it out. There are no coordinates. Unset layout means the platform default (a column, top to bottom).
-Placement is structure: "top right" = a header row (dir row, justify between) whose last child is the thing. A sidebar = a row whose first child is a narrow stack and whose second child grows.
+Placement is structure, and a spacer is how you push things apart (like SwiftUI's Spacer): a spacer takes all the free space in its row or column.
+- "Top right" = a header row: [title, spacer, …the things on the right]. Everything after the spacer sits together at the far end, in order.
+- "Next to X" = in the same row as X, right before or after it. To move a group, move its container, not each child.
+- Never rely on justify "between" with three or more children: it puts the middle ones in the middle.
+- A sidebar = a row whose first child is a narrow stack and whose second child grows.
 Components are shadcn/ui: make it look like real software — headings, short real-looking copy, buttons, badges, inputs, cards, tables, metrics, charts, lucide icons. Add parents before children, in visual order.`;
 
 /** Document order: parents before children, children in order (so a model reads the tree top-down). */

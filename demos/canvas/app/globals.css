@@ -88,6 +88,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--agent); 
 .rx-node { border-radius: 8px; outline: 1px dashed transparent; outline-offset: 3px; transition: outline-color .15s; }
 .rx-node:hover { outline-color: color-mix(in srgb, var(--soft) 45%, transparent); }
 .rx-node.rx-selected { outline: 2px solid var(--agent); }
+.rx-spacer { min-height: 1px; align-self: stretch; }
 .sel-tools { display: inline-flex; gap: 6px; align-items: center; }
 .sel-tools button { padding: 2px 8px; }
 

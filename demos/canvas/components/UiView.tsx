@@ -52,6 +52,7 @@ function Sparkline({ values }: { values: number[] }) {
 function Leaf({ n }: { n: UiNode }) {
   const parts = n.text.split('|').map((x) => x.trim());
   switch (n.kind) {
+    case 'spacer': return null;
     case 'heading': {
       const size = n.variant === 'h1' ? 'text-3xl' : n.variant === 'h3' ? 'text-lg' : 'text-2xl';
       return <h2 className={cn('font-semibold tracking-tight text-foreground', size)}>{n.text}</h2>;
@@ -109,7 +110,7 @@ function NodeView({ id, nodes, selected, onSelect, agentMade }: { id: string; no
   return (
     <div
       data-node={id}
-      className={cn('rx-node min-w-0', n.grow && 'flex-1 [&>*]:w-full', selected === id && 'rx-selected', agentMade.has(id) && 'rx-agent')}
+      className={cn('rx-node min-w-0', (n.grow || n.kind === 'spacer') && 'flex-1', n.grow && n.kind !== 'spacer' && '[&>*]:w-full', n.kind === 'spacer' && 'rx-spacer', selected === id && 'rx-selected', agentMade.has(id) && 'rx-agent')}
       onClick={(e) => { e.stopPropagation(); onSelect(id); }}
       title={`${id} · ${n.kind}`}
     >
