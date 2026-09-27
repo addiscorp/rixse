@@ -1,0 +1,57 @@
+name: RixseMovies
+options:
+  bundleIdPrefix: dev.rixse
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  Rixse:
+    path: ../../packages/rixse-swift
+targets:
+  RixseMovies:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../canvas/public/zega
+        type: folder
+        buildPhase: resources
+        excludes:
+          - "zega_wasm*"
+      - path: scripts
+        type: folder
+        buildPhase: resources
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: Rixse Movies
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.rixse.movies
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6LV9UQMTRU
+        CODE_SIGNING_ALLOWED: YES
+    dependencies:
+      - package: Rixse
+        product: Rixse
+      - framework: vendor/ZegaEngine.xcframework
+        embed: true
+  RixseMoviesUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: RixseMovies

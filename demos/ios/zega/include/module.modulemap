@@ -1,0 +1,4 @@
+module ZegaEngine {
+  header "zega_ios.h"
+  export *
+}

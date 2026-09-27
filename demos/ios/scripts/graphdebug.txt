@@ -1,0 +1,2 @@
+# Debug: why did the Hanks + Meg Ryan graph prompt apply nothing?
+send show the movies Tom Hanks and Meg Ryan are both in as a graph
