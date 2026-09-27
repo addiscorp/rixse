@@ -4,7 +4,7 @@
 // never positions anything.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationNodeDatum } from 'd3-force';
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force';
 import { useRixseState } from 'rixse-react';
 import { loadZega, getZega } from '@/lib/zega';
 import { Component, type ReactNode } from 'react';
@@ -127,31 +127,89 @@ function toGraph(rows: unknown[]) {
 
 const edgeKey = (a: string, b: string) => `${a} > ${b}`;
 
+// Layout physics, ported from zega's explorer graph (zegadb/zega browser/graph.js):
+// same defaults, ranges and charge scaling. Remembered per viewer.
+type Phys = { repulsion: number; linkDist: number; pad: number; gravity: number };
+const PHYS_DEFAULTS: Phys = { repulsion: 100, linkDist: 105, pad: 10, gravity: 0 };
+const PHYS_KEY = 'rixse.demo.graph.physics';
+const loadPhys = (): Phys => { try { return { ...PHYS_DEFAULTS, ...JSON.parse(localStorage.getItem(PHYS_KEY) || '{}') }; } catch { return { ...PHYS_DEFAULTS }; } };
+const savePhys = (p: Phys) => { try { localStorage.setItem(PHYS_KEY, JSON.stringify(p)); } catch { /* private mode */ } };
+const PHYS_ROWS: { key: keyof Phys; label: string; min: number; max: number; step: number; unit: string }[] = [
+  { key: 'repulsion', label: 'Repulsion', min: 25, max: 300, step: 5, unit: '%' },
+  { key: 'linkDist', label: 'Link distance', min: 40, max: 300, step: 5, unit: '' },
+  { key: 'pad', label: 'Node padding', min: 0, max: 40, step: 1, unit: '' },
+  { key: 'gravity', label: 'Center pull', min: 0, max: 12, step: 1, unit: '%' },
+];
+/** A stable phase per node, so each one bobs on its own rhythm (zega's drift). */
+const phaseOf = (id: string) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0; return (Math.abs(h) % 1000) / 1000 * 6.283; };
+const radiusOf = (n: GNode) => (n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree));
+/** zega's fade for what is not lit: 20% and a small blur. */
+const DIM = { opacity: 0.2, filter: 'blur(1.4px)' };
+
 /**
- * The interactive graph. Drag the background to pan, wheel to zoom, drag a
- * node to move it. Click a node or an edge to select it (shift adds); the
- * selection is rixse state, dispatched as "you", so the agent sees it.
+ * The interactive graph. Drag the background to pan, wheel or +/− to zoom,
+ * drag a node to move it, ⚙ for layout physics. Click a node or an edge to
+ * select it (shift adds). The selection is rixse state, dispatched as "you",
+ * so the agent sees it. Selecting nodes fades everything outside their
+ * neighbourhood (zega's blur fade); selecting only edges does not blur.
  */
 function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; store: MoviesStore; selected: string[] }) {
   const { nodes, links } = useMemo(() => toGraph(rows), [rows]);
-  const [, tick] = useState(0);
+  const [, frame] = useState(0);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const [phys, setPhys] = useState<Phys>(PHYS_DEFAULTS);
+  const [panel, setPanel] = useState(false);
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<{ kind: 'pan' | 'node'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
   const sim = useRef<ReturnType<typeof forceSimulation<GNode>> | null>(null);
   // Whether the last press moved: a drag must not also count as a click.
   const lastMoved = useRef(false);
   const W = 720, H = 460;
+  useEffect(() => { setPhys(loadPhys()); }, []);
+
   useEffect(() => {
+    const base = -Math.max(140, 45 * Math.sqrt(nodes.length));
     const s = forceSimulation(nodes)
-      .force('link', forceLink(links as { source: string; target: string }[]).id((d) => (d as GNode).id).distance(60))
-      .force('charge', forceManyBody().strength(-220))
-      .force('collide', forceCollide(18))
+      .force('charge', forceManyBody().strength(base * phys.repulsion / 100))
+      .force('link', forceLink(links as { source: string; target: string }[]).id((d) => (d as GNode).id).distance(phys.linkDist))
       .force('center', forceCenter(W / 2, H / 2))
-      .on('tick', () => tick((n) => n + 1));
+      .force('collide', forceCollide((d) => radiusOf(d as GNode) + phys.pad))
+      .force('x', forceX(W / 2).strength(phys.gravity / 100))
+      .force('y', forceY(H / 2).strength(phys.gravity / 100))
+      .alphaDecay(nodes.length > 60 ? 0.012 : 0.0228);
     sim.current = s;
     return () => { s.stop(); };
+    // Physics changes are applied in place below, without restarting the layout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, links]);
+
+  useEffect(() => {
+    const s = sim.current; if (!s) return;
+    const base = -Math.max(140, 45 * Math.sqrt(nodes.length));
+    (s.force('charge') as ReturnType<typeof forceManyBody>).strength(base * phys.repulsion / 100);
+    (s.force('link') as ReturnType<typeof forceLink>).distance(phys.linkDist);
+    (s.force('collide') as ReturnType<typeof forceCollide>).radius((d) => radiusOf(d as GNode) + phys.pad);
+    (s.force('x') as ReturnType<typeof forceX>).strength(phys.gravity / 100);
+    (s.force('y') as ReturnType<typeof forceY>).strength(phys.gravity / 100);
+    if (s.alpha() < 0.2) s.alpha(0.25);
+    s.restart();
+    savePhys(phys);
+  }, [phys, nodes.length]);
+
+  // Buoyancy: one animation loop draws every frame (the layout plus zega's drift).
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => { frame((n) => (n + 1) % 1e6); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const t = performance.now() / 1000;
+  const at = (n: GNode) => {
+    if (!Number.isFinite(n.x)) return { x: W / 2, y: H / 2 };
+    if (n.fx != null) return { x: n.x!, y: n.y! };
+    const ph = phaseOf(n.id);
+    return { x: n.x! + Math.sin(t * 0.7 + ph) * 3.2, y: n.y! + Math.cos(t * 0.5 + ph * 1.4) * 4.4 };
+  };
 
   const sel = new Set(selected);
   const L = links as unknown as { source: GNode; target: GNode }[];
@@ -164,15 +222,17 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     }
     return m;
   }, [L]);
-  // Highlighting follows the selection only (a click), never hover: hovering a dense graph flickers.
-  const focus = selected.length === 1 && !selected[0]!.includes(' > ') ? selected[0]! : null;
-  const lit = (id: string) => !focus || id === focus || neighbours.get(focus)?.has(id) || sel.has(id);
+  // Only node selections fade the rest (zega's blur); an edge selection just highlights the edge.
+  const selNodes = selected.filter((i) => !i.includes(' > '));
+  const litSet = selNodes.length ? new Set(selNodes.flatMap((id) => [id, ...(neighbours.get(id) ?? [])])) : null;
+  const lit = (id: string) => !litSet || litSet.has(id);
 
   const toGraphXY = (e: { clientX: number; clientY: number }) => {
     const r = svg.current!.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W, py = ((e.clientY - r.top) / r.height) * H;
     return { x: (px - view.x) / view.k, y: (py - view.y) / view.k, px, py };
   };
+  const zoomBy = (f: number, px = W / 2, py = H / 2) => setView((vv) => { const k = Math.max(0.1, Math.min(4, vv.k * f)); return { k, x: px - ((px - vv.x) / vv.k) * k, y: py - ((py - vv.y) / vv.k) * k }; });
   const choose = (item: string, add: boolean) => {
     const items = add ? (sel.has(item) ? selected.filter((x) => x !== item) : [...selected, item]) : sel.has(item) && selected.length === 1 ? [] : [item];
     store.dispatch(items.length ? { type: 'select.set', payload: { view: v.id, items: items.join('|') } } : { type: 'select.clear', payload: {} }, 'you');
@@ -180,50 +240,70 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
 
   return (
     <div className="grid gap-2">
-      <svg
-        ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
-        onWheel={(e) => { e.preventDefault(); const { px, py } = toGraphXY(e); const k = Math.max(0.3, Math.min(4, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k }); }}
-        onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'pan', sx: px, sy: py, ox: view.x, oy: view.y, moved: false }; }}
-        onPointerMove={(e) => {
-          const d = drag.current; if (!d) return;
-          const { x, y, px, py } = toGraphXY(e);
-          if (Math.abs(px - d.sx) + Math.abs(py - d.sy) > 3) d.moved = true;
-          if (d.kind === 'pan') setView((vv) => ({ ...vv, x: d.ox + px - d.sx, y: d.oy + py - d.sy }));
-          else { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = x; n.fy = y; sim.current?.alpha(0.3).restart(); } }
-        }}
-        onPointerUp={() => {
-          const d = drag.current; drag.current = null; lastMoved.current = !!d?.moved;
-          if (d?.kind === 'node') { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = null; n.fy = null; } }
-          else if (d && !d.moved && selected.length) store.dispatch({ type: 'select.clear', payload: {} }, 'you');
-        }}
-      >
-        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {L.map((l, i) => {
-            const key = edgeKey(l.source.id, l.target.id), on = sel.has(key), dim = !lit(l.source.id) || !lit(l.target.id);
-            return (
-              <g key={i} className="cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
-                <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke="transparent" strokeWidth={10 / view.k} />
-                <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke={on ? PALETTE[1] : 'currentColor'} className={on ? '' : 'text-muted-foreground'} strokeOpacity={on ? 1 : dim ? 0.08 : 0.35} strokeWidth={(on ? 3 : 1) / view.k} />
-              </g>
-            );
-          })}
-          {nodes.map((n) => {
-            const on = sel.has(n.id), dim = !lit(n.id);
-            const r = n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree);
-            return (
-              <g key={n.id} transform={`translate(${n.x ?? W / 2},${n.y ?? H / 2})`} className="cursor-pointer" opacity={dim ? 0.2 : 1}
-                onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: px, sy: py, ox: 0, oy: 0, moved: false }; }}
-                onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
-                {on && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5 / view.k} />}
-                <circle r={r} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[4]} />
-                <title>{n.label}</title>
-                {(n.type === 'movie' || n.degree > 1 || on) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-      <p className="text-xs text-muted-foreground">Click a node or edge to select it and light up its links · shift-click to add · click the background to clear · drag to move · scroll to zoom · drag the background to pan. The agent can see what you select.</p>
+      <div className="relative">
+        <svg
+          ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
+          onWheel={(e) => { e.preventDefault(); const { px, py } = toGraphXY(e); zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, px, py); }}
+          onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'pan', sx: px, sy: py, ox: view.x, oy: view.y, moved: false }; }}
+          onPointerMove={(e) => {
+            const d = drag.current; if (!d) return;
+            const { x, y, px, py } = toGraphXY(e);
+            if (Math.abs(px - d.sx) + Math.abs(py - d.sy) > 3) d.moved = true;
+            if (d.kind === 'pan') setView((vv) => ({ ...vv, x: d.ox + px - d.sx, y: d.oy + py - d.sy }));
+            else { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = x; n.fy = y; sim.current?.alphaTarget(0.25).restart(); } }
+          }}
+          onPointerUp={() => {
+            const d = drag.current; drag.current = null; lastMoved.current = !!d?.moved;
+            if (d?.kind === 'node') { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = null; n.fy = null; } sim.current?.alphaTarget(0); }
+            else if (d && !d.moved && selected.length) store.dispatch({ type: 'select.clear', payload: {} }, 'you');
+          }}
+        >
+          <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+            {L.map((l, i) => {
+              const a = at(l.source), b = at(l.target);
+              const key = edgeKey(l.source.id, l.target.id), on = sel.has(key), bright = lit(l.source.id) && lit(l.target.id);
+              return (
+                <g key={i} className="cursor-pointer" style={bright || on ? undefined : DIM} onPointerDown={(e) => { e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); choose(key, e.shiftKey); }}>
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10 / view.k} />
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={on ? PALETTE[1] : 'currentColor'} className={on ? '' : 'text-muted-foreground'} strokeOpacity={on ? 1 : 0.4} strokeWidth={(on ? 3 : 1) / view.k} />
+                </g>
+              );
+            })}
+            {nodes.map((n) => {
+              const on = sel.has(n.id), p = at(n), r = radiusOf(n);
+              const touched = !on && selected.some((i) => i.includes(' > ') && (i.startsWith(n.id + ' > ') || i.endsWith(' > ' + n.id)));
+              return (
+                <g key={n.id} transform={`translate(${p.x},${p.y})`} className="cursor-pointer" style={lit(n.id) || on ? undefined : DIM}
+                  onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const q = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: q.px, sy: q.py, ox: 0, oy: 0, moved: false }; }}
+                  onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
+                  <title>{n.label}</title>
+                  {(on || touched) && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5 / view.k} />}
+                  <circle r={r} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[4]} />
+                  {(n.type === 'movie' || n.degree > 1 || on) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+        <div className="absolute right-2 top-2 flex flex-col gap-1">
+          <button type="button" title="layout settings" aria-expanded={panel} onClick={() => setPanel((o) => !o)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">⚙</button>
+          <button type="button" title="zoom in" onClick={() => zoomBy(1.12)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">+</button>
+          <button type="button" title="zoom out" onClick={() => zoomBy(1 / 1.12)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">−</button>
+        </div>
+        {panel && (
+          <div className="absolute right-11 top-2 w-60 rounded-lg border bg-background/95 p-3 shadow-sm grid gap-2 text-xs text-foreground" role="group" aria-label="Layout physics">
+            {PHYS_ROWS.map((row) => (
+              <label key={row.key} className="grid grid-cols-[88px_minmax(0,1fr)_36px] items-center gap-2">
+                <span className="text-muted-foreground">{row.label}</span>
+                <input type="range" min={row.min} max={row.max} step={row.step} value={phys[row.key]} onChange={(e) => setPhys((p) => ({ ...p, [row.key]: Number(e.target.value) }))} />
+                <b className="text-right tabular-nums font-medium">{phys[row.key]}{row.unit}</b>
+              </label>
+            ))}
+            <button type="button" className="justify-self-end underline text-muted-foreground" onClick={() => setPhys({ ...PHYS_DEFAULTS })}>reset</button>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">Click a node to select it and fade the rest · click an edge to highlight it · shift-click to add · click the background to clear · drag to move · scroll or +/− to zoom · ⚙ layout. The agent can see what you select.</p>
     </div>
   );
 }
