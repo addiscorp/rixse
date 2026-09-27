@@ -7,6 +7,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 const MODELS = {
   gemma: { label: 'Gemma 4 26B', id: '@cf/google/gemma-4-26b-a4b-it' },
+  oss: { label: 'gpt-oss 20B (low effort)', id: '@cf/openai/gpt-oss-20b' },
   opus: { label: 'Opus 5.5', id: 'claude-opus-5-5' },
 } as const;
 type ModelKey = keyof typeof MODELS;
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
   if (typeof body.message !== 'string' || !body.message.trim()) {
     return Response.json({ error: 'empty message' }, { status: 400 });
   }
-  const key: ModelKey = body.model === 'opus' ? 'opus' : 'gemma';
+  const key: ModelKey = body.model === 'opus' || body.model === 'oss' ? body.model : 'gemma';
   const sys = system(String(body.brief ?? 'You operate an interface on behalf of the user.').slice(0, 4000), String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
   const turns = [...(body.history ?? []).slice(-HISTORY_MAX), { role: 'user' as const, content: body.message.slice(0, 2000) }];
   const tPrompt = performance.now();
@@ -139,7 +140,7 @@ export async function POST(request: Request) {
         } else {
           const { env } = getCloudflareContext() as unknown as { env: { AI?: { run(model: string, input: unknown): Promise<unknown> } } };
           if (!env.AI) throw new Error('The AI binding is missing (run with wrangler credentials).');
-          const out = await env.AI.run(MODELS.gemma.id, { messages: [{ role: 'system', content: sys }, ...turns], max_tokens: 4096, temperature: 0, stream: true, chat_template_kwargs: { enable_thinking: false } });
+          const out = await env.AI.run(MODELS[key].id, { messages: [{ role: 'system', content: sys }, ...turns], max_tokens: 4096, temperature: 0, stream: true, ...(key === 'oss' ? { reasoning_effort: 'low' } : { chat_template_kwargs: { enable_thinking: false } }) });
           await sse(out as ReadableStream<Uint8Array>, (e) => {
             onText(e.choices?.[0]?.delta?.content ?? (typeof e.response === 'string' ? e.response : ''));
             const u = e.usage;
