@@ -5,7 +5,8 @@ import type { Store, Wire } from 'rixse';
 import type { Note } from './Logs';
 
 type Turn = { role: 'user' | 'assistant'; content: string; footnote?: string };
-type Proposal = { say: string; actions: { type: string; payload?: unknown }[]; ms: number; model: string; usage?: { input: number; output: number }; parseError?: boolean; error?: string };
+type Timing = { readBody: number; buildPrompt: number; model: number; parse: number; server: number };
+type Proposal = { timing?: Timing; say: string; actions: { type: string; payload?: unknown }[]; ms: number; model: string; usage?: { input: number; output: number }; parseError?: boolean; error?: string };
 type Format = 'wire' | 'json';
 type Model = 'gemma' | 'opus';
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -27,27 +28,40 @@ export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: S
     setBusy(true);
     const history = turns.map((t) => ({ role: t.role, content: t.footnote ? `${t.content}\n(${t.footnote})` : t.content }));
     setTurns([...history, { role: 'user', content: message }]);
+    const t0 = performance.now();
     const wireText = wire.encode(store.state);
     const jsonText = JSON.stringify(store.state);
     const context = format === 'wire' ? wireText : jsonText;
     note({ kind: 'agent', text: `→ ${model === 'opus' ? 'Opus 5.5' : 'Gemma 4'} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
     try {
+      const tContext = performance.now();
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brief, message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
       });
       const p = (await res.json()) as Proposal;
+      const tResponse = performance.now();
       if (!res.ok || p.error) throw new Error(p.error ?? `HTTP ${res.status}`);
       note({ kind: 'agent', text: `← ${p.model}: ${p.actions.length} action${p.actions.length === 1 ? '' : 's'} · ${p.usage ? `${fmt(p.usage.input)} in / ${fmt(p.usage.output)} out tokens · ` : ''}${fmt(p.ms)} ms${p.parseError ? ' · reply was not JSON' : ''}` });
       // The model refers to items by wire handle; translate back to real ids before dispatch.
       const actions = format === 'wire' ? p.actions.map((a) => wire.resolve(a, store.params(a.type))) : p.actions;
       const results = store.applyProposal(actions, message);
+      const tApplied = performance.now();
       rejections.current = results.filter((r) => !r.result.ok).map((r) => `${r.action.type} ${JSON.stringify(r.action.payload ?? {})}: ${(r.result as { error: string }).error}`);
       // The reply was written before rixse applied anything: say plainly what did not land.
       const failed = results.filter((r) => !r.result.ok).length;
       const footnote = failed ? `${failed} of ${results.length} change${results.length === 1 ? '' : 's'} didn't apply — see the logs.` : undefined;
       setTurns((t) => [...t, { role: 'assistant', content: p.say || '(done)', footnote }]);
+      // Time to first paint of the result: two frames after React commits.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const tPaint = performance.now();
+        const r = (a: number, b: number) => fmt(Math.round(b - a));
+        const tm = p.timing;
+        const overhead = tm ? Math.round(tResponse - tContext) - tm.model : 0;
+        const rate = p.usage && tm && tm.model > 0 ? Math.round((p.usage.output / tm.model) * 1000) : 0;
+        note({ kind: 'agent', text: `⏱ ${r(t0, tPaint)} ms = context ${r(t0, tContext)} · model ${tm ? fmt(tm.model) : '?'}${p.usage ? ` (${fmt(p.usage.output)} out tok, ${rate} tok/s)` : ''} · network+server ${fmt(overhead)} · apply ${r(tResponse, tApplied)} · paint ${r(tApplied, tPaint)}` });
+      }));
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
       note({ kind: 'error', text });

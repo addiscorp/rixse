@@ -65,13 +65,16 @@ function replyText(result: unknown): string {
 }
 
 export async function POST(request: Request) {
+  const t0 = performance.now();
   const body = (await request.json()) as Body;
+  const tBody = performance.now();
   if (typeof body.message !== 'string' || !body.message.trim()) {
     return Response.json({ error: 'empty message' }, { status: 400 });
   }
   const key: ModelKey = body.model === 'opus' ? 'opus' : 'gemma';
   const sys = system(String(body.brief ?? 'You operate an interface on behalf of the user.').slice(0, 4000), String(body.vocabulary ?? ''), String(body.context ?? ''), body.format === 'wire' ? 'wire' : 'json', String(body.legend ?? ''), (body.rejections ?? []).slice(0, 10));
   const turns = [...(body.history ?? []).slice(-HISTORY_MAX), { role: 'user' as const, content: body.message.slice(0, 2000) }];
+  const tPrompt = performance.now();
   const started = Date.now();
   let raw = '';
   let usage = { input: 0, output: 0 };
@@ -94,15 +97,19 @@ export async function POST(request: Request) {
     return Response.json({ error: `model call failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 502 });
   }
   const ms = Date.now() - started;
+  const tModel = performance.now();
   const parsed = firstJsonObject(raw) as { say?: unknown; actions?: unknown } | null;
   const model = MODELS[key].label;
-  if (!parsed) return Response.json({ say: raw.trim().slice(0, 500) || '(no reply)', actions: [], ms, model, usage, parseError: true, raw });
+  const timing = { readBody: Math.round(tBody - t0), buildPrompt: Math.round(tPrompt - tBody), model: Math.round(tModel - tPrompt), parse: 0, server: 0 };
+  const done = () => { timing.parse = Math.round(performance.now() - tModel); timing.server = Math.round(performance.now() - t0); return timing; };
+  if (!parsed) return Response.json({ say: raw.trim().slice(0, 500) || '(no reply)', actions: [], ms, model, usage, timing: done(), parseError: true, raw });
   return Response.json({
     say: typeof parsed.say === 'string' ? parsed.say : '',
     actions: Array.isArray(parsed.actions) ? parsed.actions : [],
     ms,
     model,
     usage,
+    timing: done(),
     raw,
   });
 }
