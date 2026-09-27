@@ -37,8 +37,9 @@ extension MovieStore {
       let applied = log.dropFirst(before).filter { !$0.undone }
       let detail = applied.map { "\($0.type) \(jsStringify($0.payload))" }.joined(separator: " | ")
       let rejected = notes.dropFirst(notesBefore).filter { $0.kind == .rejected || $0.kind == .error }.map(\.text)
+      let latency = notes.dropFirst(notesBefore).map(\.text).last(where: { $0.hasPrefix("⏱") })
       let say = turns.last?.content ?? ""
-      progress("STEP \(index) send \"\(rest)\" — \(applied.count) applied\(detail.isEmpty ? "" : ": \(detail)")\(rejected.isEmpty ? "" : " — rejected: \(rejected.joined(separator: " | "))") — say: \(say)")
+      progress("STEP \(index) send \"\(rest)\" — \(applied.count) applied\(detail.isEmpty ? "" : ": \(detail)")\(rejected.isEmpty ? "" : " — rejected: \(rejected.joined(separator: " | "))")\(latency.map { " — \($0)" } ?? "") — say: \(say)")
     case "tapbars":
       // What tapping the first N bars of the first bar chart dispatches.
       let n = Int(rest) ?? 2
