@@ -196,7 +196,7 @@ export function MoviesView({ store }: { store: MoviesStore }) {
         <div className={cn('ui-screen bg-background text-foreground', dark && 'dark')}>
           {state.order.length === 0
             ? <p className="text-sm text-muted-foreground">Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”, “Christopher Nolan’s films”.</p>
-            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} /></ViewBoundary>)}</div>}
+            : <div className="grid gap-4 lg:grid-cols-2">{state.order.map((id) => <div key={id} className={cn('min-w-0', state.views[id]!.size === 'full' && 'lg:col-span-2')}><ViewBoundary key={`${id}:${state.views[id]!.query}:${state.views[id]!.kind}`} title={state.views[id]!.title}><ViewCard v={state.views[id]!} /></ViewBoundary></div>)}</div>}
         </div>
       </div>
     </section>

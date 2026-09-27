@@ -7,7 +7,9 @@ import { getZega } from './zega.ts';
 
 export const VIEW_KINDS = ['bar', 'pie', 'table', 'graph'] as const;
 export type ViewKind = (typeof VIEW_KINDS)[number];
-export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number };
+export const PLACES = ['end', 'before', 'after', 'replace'] as const;
+export type Place = (typeof PLACES)[number];
+export type View = { id: string; kind: ViewKind; title: string; query: string; label: string; value: string; sort: string; limit: number; size: 'half' | 'full' };
 export type MoviesState = { views: Record<string, View>; order: string[] };
 export type Datum = { label: string; value: number };
 
@@ -82,6 +84,28 @@ export function runQuery(query: string): unknown[] {
 
 const act = <P,>(type: string, def: Omit<ActionDef<MoviesState, P>, 'type'>) => defineAction<MoviesState, P>(type, def);
 
+/**
+ * Where a view goes in the order. The agent decides (end, before/after a view,
+ * or replace one); rixse checks the target exists and is not the view itself.
+ * Returns the new order and the id a replace removes.
+ */
+export function place(order: string[], id: string, at: Place = 'end', target?: string): { order: string[]; removed?: string } {
+  const rest = order.filter((x) => x !== id);
+  if (at === 'end') return { order: [...rest, id] };
+  if (!target) throw new Rejected(`at "${at}" needs a target view`);
+  if (target === id) throw new Rejected('a view cannot be placed relative to itself');
+  const i = rest.indexOf(target);
+  if (i < 0) throw new Rejected(`no view "${target}" to place ${at === 'replace' ? 'over' : at}`);
+  if (at === 'replace') return { order: [...rest.slice(0, i), id, ...rest.slice(i + 1)], removed: target };
+  const j = at === 'before' ? i : i + 1;
+  return { order: [...rest.slice(0, j), id, ...rest.slice(j)] };
+}
+
+const PLACE_PARAMS = {
+  at: { type: 'enum', values: PLACES, optional: true, describe: 'where it goes: "end" (default), "before"/"after" the target, or "replace" the target (the target view is removed; its spot is taken)' },
+  target: { type: 'string', ref: 'view', optional: true, describe: 'the view id (or handle) that "at" refers to' },
+} as const;
+
 export const movieActions = [
   act('view.show', {
     describe: 'Show a view of query results, or replace the view with this id. The page runs the query in zega and draws the rows; you never see or write the data.',
@@ -94,16 +118,39 @@ export const movieActions = [
       value: { type: 'string', optional: true, describe: 'bar/pie: field path or sum|count|avg|max|min(path), e.g. "gross", "sum(movies.gross)", "count(acted_in)"' },
       sort: { type: 'string', optional: true, describe: '"value desc" (default), "value asc" or "label asc"' },
       limit: { type: 'number', optional: true, describe: 'keep the first N after sorting' },
+      size: { type: 'enum', values: ['half', 'full'], optional: true, describe: 'half (default) or full width' },
+      ...PLACE_PARAMS,
     },
-    apply: (s: MoviesState, p: Partial<View> & { id: string; kind: ViewKind; title: string; query: string }) => {
+    apply: (s: MoviesState, p: Partial<View> & { id: string; kind: ViewKind; title: string; query: string; at?: Place; target?: string }) => {
       const rows = runQuery(p.query);
       if (!rows.length) throw new Rejected('the query ran but returned no rows; loosen the filter (findLike folds case) or check the names');
-      const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0 };
+      const view: View = { id: p.id, kind: p.kind, title: p.title, query: p.query, label: p.label ?? '', value: p.value ?? '', sort: p.sort ?? '', limit: p.limit ?? 0, size: p.size ?? s.views[p.id]?.size ?? 'half' };
       if ((p.kind === 'bar' || p.kind === 'pie') && !series(rows, view).length) {
         const keys = Object.keys((rows[0] ?? {}) as object).join(', ');
         throw new Rejected(`value "${view.value}" gives no numbers for label "${view.label}"; the rows have fields: ${keys}`);
       }
-      return { views: { ...s.views, [p.id]: view }, order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
+      // Re-showing an existing id keeps its spot unless a place is given.
+      const placed = p.at ? place(s.order, p.id, p.at, p.target) : { order: s.order.includes(p.id) ? s.order : [...s.order, p.id] };
+      const views = { ...s.views, [p.id]: view };
+      if ('removed' in placed && placed.removed) delete views[placed.removed];
+      return { views, order: placed.order };
+    },
+  }),
+  act('view.move', {
+    describe: 'Move a view to the end, or before/after another view.',
+    params: { id: { type: 'string', ref: 'view' }, at: { type: 'enum', values: ['end', 'before', 'after'] }, target: { type: 'string', ref: 'view', optional: true } },
+    apply: (s: MoviesState, p: { id: string; at: 'end' | 'before' | 'after'; target?: string }) => {
+      if (!s.views[p.id]) throw new Rejected(`no view "${p.id}"`);
+      return { ...s, order: place(s.order, p.id, p.at, p.target).order };
+    },
+  }),
+  act('view.resize', {
+    describe: 'Make a view half or full width.',
+    params: { id: { type: 'string', ref: 'view' }, size: { type: 'enum', values: ['half', 'full'] } },
+    apply: (s: MoviesState, p: { id: string; size: 'half' | 'full' }) => {
+      const v = s.views[p.id];
+      if (!v) throw new Rejected(`no view "${p.id}"`);
+      return { ...s, views: { ...s.views, [p.id]: { ...v, size: p.size } } };
     },
   }),
   act('view.remove', {
@@ -121,7 +168,8 @@ export const movieActions = [
 export function moviesBrief(schema: string) {
   return `You answer questions about movies by showing views on the page. You decide WHAT to show: a ZQL query and a chart kind. The page runs the query in the zega database and draws the result; you never see the rows, so never state numbers in "say" — say what you are showing.
 Pick the view: bar to compare amounts (box office, counts; use limit, e.g. 10–20), pie for shares of a whole (it shows 7 slices plus Other), table for detail rows, graph to show how movies and people connect (shared cast, a director's films).
-Reuse a view's id to change it. Keep "say" to one short sentence.
+Views sit in a two-column grid in order. You decide where: "at" end (default), before/after a target view, or "replace" a target (e.g. "turn that bar chart into a pie" = a new view that replaces it). size "full" spans both columns. Reuse a view's id to change it in place; view.move and view.resize rearrange.
+Keep "say" to one short sentence.
 
 The database (ZQL schema; -> points out of a type, <- points in):
 ${schema}
@@ -143,7 +191,7 @@ export function createMoviesWire() {
   return createWire<MoviesState>({
     entities: [{
       type: 'view', list: (s) => s.order.map((id) => s.views[id]!), id: (v) => v.id,
-      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }],
+      fields: [{ name: 'kind' }, { name: 'title' }, { name: 'query' }, { name: 'label', default: '' }, { name: 'value', default: '' }, { name: 'sort', default: '' }, { name: 'limit', default: 0 }, { name: 'size', default: 'half' }],
     }],
   });
 }

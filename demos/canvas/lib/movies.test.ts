@@ -32,3 +32,17 @@ test('a chart never draws more than its cap; a pie folds the rest into Other', (
   assert.equal(pie.data.at(-1)!.label, 'Other (993)');
   assert.equal(pie.data.reduce((a, d) => a + d.value, 0), many.reduce((a, d) => a + d.value, 0), 'Other keeps the total');
 });
+
+import { place } from './movies.ts';
+
+test('placement: end, before, after, replace — decided by the agent, checked by rixse', () => {
+  const order = ['a', 'b', 'c'];
+  assert.deepEqual(place(order, 'n').order, ['a', 'b', 'c', 'n']);
+  assert.deepEqual(place(order, 'n', 'before', 'b').order, ['a', 'n', 'b', 'c']);
+  assert.deepEqual(place(order, 'n', 'after', 'b').order, ['a', 'b', 'n', 'c']);
+  assert.deepEqual(place(order, 'n', 'replace', 'b'), { order: ['a', 'n', 'c'], removed: 'b' });
+  assert.deepEqual(place(order, 'a', 'after', 'c').order, ['b', 'c', 'a'], 'moving an existing view');
+  assert.throws(() => place(order, 'n', 'replace', 'zz'), /no view "zz"/);
+  assert.throws(() => place(order, 'b', 'before', 'b'), /relative to itself/);
+  assert.throws(() => place(order, 'n', 'after'), /needs a target/);
+});
