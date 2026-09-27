@@ -1,0 +1,7 @@
+view.show { id: string — a short slug; reuse an existing id (or its handle) to change it instead of adding one; kind: "stat" | "bar" | "note" — see the components list; title: string; query?: string — one query in the source’s language; size?: "viewport" | "large" | "medium" | "small" — one of the sizes the kind comes in; default is its usual size; value?: string; label?: string; at?: "end" | "before" | "after" | "replace" — "end" (default), "before"/"after" the target, or "replace" the target (it is removed; its spot is taken); target?: string — the component id (or handle) "at" refers to } — Show a component, or change the one with this id. The page runs its query and draws the rows; you never see or write the data.
+view.move { id: string; at: "end" | "before" | "after"; target?: string } — Move a component to the end, or before/after another.
+view.resize { id: string; size: "viewport" | "large" | "medium" | "small" } — Change a component’s size (only to a size its kind comes in).
+view.remove { id: string } — Remove a component.
+view.clear {  } — Remove every component.
+select.set { view: string; items: string — "|"-separated; what each kind selects is in the components list } — Select things in one component (the user does this by clicking; you may too, to point at an answer). Replaces the selection.
+select.clear {  } — Clear the selection.

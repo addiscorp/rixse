@@ -1,0 +1,391 @@
+{
+  "cases": [
+    {
+      "encode": "selected(view item)\nv1 Avatar\nv1 Titanic\nview(h kind title size query [label=\"\"] [value=\"\"] [sort=\"\"] [limit=0] [x=\"\"] [flag=none] [threshold=0] [notes=\"\"])\nv1 bar \"Top 10\" medium \"{ Movie limit 100000 { title gross } }\" label=title value=gross limit=10\nv2 stat Titanic small \"{ Movie(title findLike \\\"Titanic\\\") limit 100000 { title gross } }\" label=title value=gross",
+      "name": "selection rows come first and name their view by handle",
+      "resolves": [
+        {
+          "action": {
+            "payload": {
+              "id": "v2",
+              "size": "large"
+            },
+            "type": "view.resize"
+          },
+          "expect": {
+            "payload": {
+              "id": "titanic",
+              "size": "large"
+            },
+            "type": "view.resize"
+          },
+          "params": {
+            "id": {
+              "ref": "view",
+              "type": "string"
+            },
+            "size": {
+              "type": "enum",
+              "values": [
+                "viewport",
+                "large",
+                "medium",
+                "small"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "payload": {
+              "items": "Titanic",
+              "view": "v1"
+            },
+            "type": "select.set"
+          },
+          "expect": {
+            "payload": {
+              "items": "Titanic",
+              "view": "top-10"
+            },
+            "type": "select.set"
+          },
+          "params": {
+            "items": {
+              "describe": "\"|\"-separated; what each kind selects is in the components list",
+              "type": "string"
+            },
+            "view": {
+              "ref": "view",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "action": {
+            "payload": {
+              "at": "after",
+              "id": "new-slug",
+              "kind": "bar",
+              "query": "q",
+              "target": "v1",
+              "title": "x"
+            },
+            "type": "view.show"
+          },
+          "expect": {
+            "payload": {
+              "at": "after",
+              "id": "new-slug",
+              "kind": "bar",
+              "query": "q",
+              "target": "top-10",
+              "title": "x"
+            },
+            "type": "view.show"
+          },
+          "params": {
+            "at": {
+              "describe": "\"end\" (default), \"before\"/\"after\" the target, or \"replace\" the target (it is removed; its spot is taken)",
+              "optional": true,
+              "type": "enum",
+              "values": [
+                "end",
+                "before",
+                "after",
+                "replace"
+              ]
+            },
+            "flag": {
+              "default": "none",
+              "optional": true,
+              "type": "enum",
+              "values": [
+                "none",
+                "drops",
+                "rises",
+                "both"
+              ]
+            },
+            "id": {
+              "describe": "a short slug; reuse an existing id (or its handle) to change it instead of adding one",
+              "ref": "view",
+              "type": "string"
+            },
+            "kind": {
+              "describe": "see the components list",
+              "type": "enum",
+              "values": [
+                "stat",
+                "bar",
+                "pie",
+                "line",
+                "table",
+                "graph"
+              ]
+            },
+            "label": {
+              "default": "",
+              "optional": true,
+              "type": "string"
+            },
+            "limit": {
+              "default": 0,
+              "optional": true,
+              "type": "number"
+            },
+            "notes": {
+              "default": "",
+              "optional": true,
+              "type": "string"
+            },
+            "query": {
+              "describe": "zega: one ZQL read query, shaped { Type(filter) limit 100000 { field rel -> Type { field } } }",
+              "optional": true,
+              "type": "string"
+            },
+            "size": {
+              "describe": "one of the sizes the kind comes in; default is its usual size",
+              "optional": true,
+              "type": "enum",
+              "values": [
+                "viewport",
+                "large",
+                "medium",
+                "small"
+              ]
+            },
+            "sort": {
+              "default": "",
+              "optional": true,
+              "type": "string"
+            },
+            "target": {
+              "describe": "the component id (or handle) \"at\" refers to",
+              "optional": true,
+              "ref": "view",
+              "type": "string"
+            },
+            "threshold": {
+              "default": 0,
+              "optional": true,
+              "type": "number"
+            },
+            "title": {
+              "type": "string"
+            },
+            "value": {
+              "default": "",
+              "optional": true,
+              "type": "string"
+            },
+            "x": {
+              "optional": true,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "action": {
+            "payload": {
+              "id": "v9"
+            },
+            "type": "view.remove"
+          },
+          "expect": {
+            "payload": {
+              "id": "v9"
+            },
+            "type": "view.remove"
+          },
+          "params": {
+            "id": {
+              "ref": "view",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "action": {
+            "payload": {
+              "id": "top-10"
+            },
+            "type": "view.remove"
+          },
+          "expect": {
+            "payload": {
+              "id": "top-10"
+            },
+            "type": "view.remove"
+          },
+          "params": {
+            "id": {
+              "ref": "view",
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "rows": {
+        "selected": [
+          {
+            "item": "Avatar",
+            "view": "top-10"
+          },
+          {
+            "item": "Titanic",
+            "view": "top-10"
+          }
+        ],
+        "view": [
+          {
+            "_id": "top-10",
+            "flag": "none",
+            "kind": "bar",
+            "label": "title",
+            "limit": 10,
+            "notes": "",
+            "query": "{ Movie limit 100000 { title gross } }",
+            "size": "medium",
+            "sort": "",
+            "threshold": 0,
+            "title": "Top 10",
+            "value": "gross",
+            "x": ""
+          },
+          {
+            "_id": "titanic",
+            "flag": "none",
+            "kind": "stat",
+            "label": "title",
+            "limit": 0,
+            "notes": "",
+            "query": "{ Movie(title findLike \"Titanic\") limit 100000 { title gross } }",
+            "size": "small",
+            "sort": "",
+            "threshold": 0,
+            "title": "Titanic",
+            "value": "gross",
+            "x": ""
+          }
+        ]
+      },
+      "state": {
+        "items": {
+          "titanic": {
+            "id": "titanic",
+            "kind": "stat",
+            "label": "title",
+            "query": "{ Movie(title findLike \"Titanic\") limit 100000 { title gross } }",
+            "size": "small",
+            "title": "Titanic",
+            "value": "gross"
+          },
+          "top-10": {
+            "id": "top-10",
+            "kind": "bar",
+            "label": "title",
+            "limit": 10,
+            "query": "{ Movie limit 100000 { title gross } }",
+            "size": "medium",
+            "sort": "",
+            "title": "Top 10",
+            "value": "gross"
+          }
+        },
+        "order": [
+          "top-10",
+          "titanic"
+        ],
+        "selection": {
+          "items": [
+            "Avatar",
+            "Titanic"
+          ],
+          "view": "top-10"
+        }
+      }
+    },
+    {
+      "encode": "selected(view item) none\nview(h kind title size query [label=\"\"] [value=\"\"] [sort=\"\"] [limit=0] [x=\"\"] [flag=none] [threshold=0] [notes=\"\"]) none",
+      "name": "empty state",
+      "resolves": [],
+      "rows": {
+        "selected": [],
+        "view": []
+      },
+      "state": {
+        "items": {},
+        "order": [],
+        "selection": null
+      }
+    }
+  ],
+  "legend": "Each type starts with a schema line: type(h required… [optional=default]…). Then one row per item: its handle, required fields in order, then name=value for optional fields that differ from their default. Refer to existing items by handle.",
+  "spec": {
+    "entities": [
+      {
+        "fields": [
+          {
+            "name": "view",
+            "ref": "view"
+          },
+          {
+            "name": "item"
+          }
+        ],
+        "type": "selected"
+      },
+      {
+        "fields": [
+          {
+            "name": "kind"
+          },
+          {
+            "name": "title"
+          },
+          {
+            "name": "size"
+          },
+          {
+            "name": "query"
+          },
+          {
+            "default": "",
+            "name": "label"
+          },
+          {
+            "default": "",
+            "name": "value"
+          },
+          {
+            "default": "",
+            "name": "sort"
+          },
+          {
+            "default": 0,
+            "name": "limit"
+          },
+          {
+            "default": "",
+            "name": "x"
+          },
+          {
+            "default": "none",
+            "name": "flag"
+          },
+          {
+            "default": 0,
+            "name": "threshold"
+          },
+          {
+            "default": "",
+            "name": "notes"
+          }
+        ],
+        "idField": "id",
+        "type": "view"
+      }
+    ]
+  }
+}

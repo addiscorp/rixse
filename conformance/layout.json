@@ -1,0 +1,211 @@
+[
+  {
+    "expect": {
+      "400": {
+        "cells": [
+          {
+            "cols": 1,
+            "id": "s",
+            "rows": 1
+          },
+          {
+            "cols": 2,
+            "id": "b",
+            "rows": 2
+          },
+          {
+            "cols": 2,
+            "id": "w",
+            "rows": 0
+          }
+        ],
+        "cols": 2
+      },
+      "900": {
+        "cells": [
+          {
+            "cols": 1,
+            "id": "s",
+            "rows": 1
+          },
+          {
+            "cols": 2,
+            "id": "b",
+            "rows": 2
+          },
+          {
+            "cols": 4,
+            "id": "w",
+            "rows": 0
+          }
+        ],
+        "cols": 4
+      },
+      "1400": {
+        "cells": [
+          {
+            "cols": 1,
+            "id": "s",
+            "rows": 1
+          },
+          {
+            "cols": 2,
+            "id": "b",
+            "rows": 2
+          },
+          {
+            "cols": 6,
+            "id": "w",
+            "rows": 0
+          }
+        ],
+        "cols": 6
+      }
+    },
+    "name": "columns follow the container; sizes clamp; viewport takes the row",
+    "shown": [
+      {
+        "id": "s",
+        "kind": "stat",
+        "query": "films",
+        "title": "s",
+        "value": "gross"
+      },
+      {
+        "id": "b",
+        "kind": "bar",
+        "query": "films",
+        "title": "b",
+        "value": "gross"
+      },
+      {
+        "id": "w",
+        "kind": "bar",
+        "query": "films",
+        "size": "viewport",
+        "title": "w",
+        "value": "gross"
+      }
+    ],
+    "state": {
+      "items": {
+        "b": {
+          "id": "b",
+          "kind": "bar",
+          "label": "title",
+          "query": "films",
+          "size": "large",
+          "title": "b",
+          "value": "gross"
+        },
+        "s": {
+          "id": "s",
+          "kind": "stat",
+          "query": "films",
+          "size": "small",
+          "title": "s",
+          "value": "gross"
+        },
+        "w": {
+          "id": "w",
+          "kind": "bar",
+          "label": "title",
+          "query": "films",
+          "size": "viewport",
+          "title": "w",
+          "value": "gross"
+        }
+      },
+      "order": [
+        "s",
+        "b",
+        "w"
+      ],
+      "selection": null
+    }
+  },
+  {
+    "bands": [
+      {
+        "cols": 1,
+        "min": 0
+      },
+      {
+        "cols": 3,
+        "min": 500
+      }
+    ],
+    "expect": {
+      "400": {
+        "cells": [
+          {
+            "cols": 1,
+            "id": "a",
+            "rows": 1
+          },
+          {
+            "cols": 1,
+            "id": "b",
+            "rows": 2
+          }
+        ],
+        "cols": 1
+      },
+      "900": {
+        "cells": [
+          {
+            "cols": 1,
+            "id": "a",
+            "rows": 1
+          },
+          {
+            "cols": 2,
+            "id": "b",
+            "rows": 2
+          }
+        ],
+        "cols": 3
+      }
+    },
+    "name": "custom bands",
+    "shown": [
+      {
+        "id": "a",
+        "kind": "note",
+        "title": "a"
+      },
+      {
+        "id": "b",
+        "kind": "bar",
+        "query": "films",
+        "title": "b",
+        "value": "gross"
+      }
+    ],
+    "state": {
+      "items": {
+        "a": {
+          "id": "a",
+          "kind": "note",
+          "query": "",
+          "size": "small",
+          "title": "a"
+        },
+        "b": {
+          "id": "b",
+          "kind": "bar",
+          "label": "title",
+          "query": "films",
+          "size": "large",
+          "title": "b",
+          "value": "gross"
+        }
+      },
+      "order": [
+        "a",
+        "b"
+      ],
+      "selection": null
+    }
+  }
+]

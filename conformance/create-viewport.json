@@ -1,0 +1,6 @@
+[
+  {
+    "error": "component \"stat\" reads unknown source \"db\"",
+    "name": "a component reading an unknown source"
+  }
+]
