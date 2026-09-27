@@ -7,6 +7,10 @@
   ],
   "scripts": {
     "test": "npm test -w rixse",
+    "bench": "node --experimental-strip-types bench/run.mjs && node --experimental-strip-types bench/report.mjs",
     "demo": "npm run dev -w rixse-demo-canvas"
+  },
+  "devDependencies": {
+    "react-server-dom-webpack": "19.2.0"
   }
 }
