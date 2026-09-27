@@ -22,6 +22,7 @@ const models = [
   { key: 'opus-5.5', id: 'claude-opus-5-5', provider: 'anthropic', temperature: null },
   { key: 'granite', id: '@cf/ibm-granite/granite-4.0-h-micro', provider: 'workers', temperature: 0 },
   { key: 'gpt-oss-20b', id: '@cf/openai/gpt-oss-20b', provider: 'workers', temperature: 0 },
+  { key: 'glm-4.7-flash', id: '@cf/zai-org/glm-4.7-flash', provider: 'workers', temperature: 0 },
   { key: 'gpt-oss-20b-low', id: '@cf/openai/gpt-oss-20b', provider: 'workers', temperature: 0, extra: { reasoning_effort: 'low' } },
 ];
 const runId = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
@@ -141,7 +142,7 @@ async function checkpoint(complete = false) {
   await writeFile(outputPath, JSON.stringify(output, null, 2) + '\n');
 }
 
-for (const model of models.filter((item) => (only ? item.key === only : !['granite', 'gpt-oss-20b', 'gpt-oss-20b-low'].includes(item.key)))) {
+for (const model of models.filter((item) => (only ? item.key === only : !['granite', 'gpt-oss-20b', 'gpt-oss-20b-low', 'glm-4.7-flash'].includes(item.key)))) {
   const selected = model.provider === 'anthropic' ? [['json', 'json'], ['wire', 'json'], ['wire', 'wire']] : inputs.flatMap((format) => [['json', format], ...(format === 'wire' ? [['wire', format]] : [])].map(([output, input]) => [input, output]));
   for (const item of tasks) {
     const { store, initial } = makeTaskState(item);

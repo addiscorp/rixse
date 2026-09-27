@@ -1,6 +1,6 @@
-# Benchmark results — 2026-09-27T01-26-01-090Z
+# Benchmark results — 2026-09-27T01-29-10-311Z
 
-Completed measurements: 760. Proxy model calls in this run: 820. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T01-26-01-090Z.json**.
+Completed measurements: 860. Proxy model calls in this run: 920. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T01-29-10-311Z.json**.
 
 ## Summary by model
 
@@ -74,6 +74,16 @@ Metrics average model-reported API token counts and latency. First-try validity 
 | wire/json | 473.9 | 141.1 | 1076.0 | 100.0% | 100.0% | 0 |
 | wire/wire | 507.9 | 209.4 | 1495.0 | 66.7% | 80.0% | 0 |
 
+### glm-4.7-flash (@cf/zai-org/glm-4.7-flash)
+
+| Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
+|---|---:|---:|---:|---:|---:|---:|
+| markup/json | 793.3 | 50.5 | 936.9 | 80.8% | 85.0% | 0 |
+| json/json | 466.6 | 43.9 | 846.9 | 96.0% | 100.0% | 0 |
+| flight/json | 3860.9 | 41.0 | 1033.8 | 84.6% | 85.0% | 0 |
+| wire/json | 407.8 | 58.4 | 979.7 | 96.0% | 100.0% | 0 |
+| wire/wire | 442.8 | 31.9 | 843.5 | 36.0% | 40.0% | 0 |
+
 ### gpt-oss-20b-low (@cf/openai/gpt-oss-20b)
 
 | Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
@@ -88,12 +98,12 @@ Metrics average model-reported API token counts and latency. First-try validity 
 
 API input tokens for task `sixty-card`, JSON output only. Counts are model-tokenizer-specific. A context overflow is reported as a failed-by-size result.
 
-| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 | granite | gpt-oss-20b | gpt-oss-20b-low |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| markup | 5064 | 4789 | 4532 | 5064 | n/a | 4292 | 4534 | 4534 |
-| json | 2482 | 2398 | 2153 | 2483 | 3261 | 2036 | 2155 | 2155 |
-| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a | 37102 | 37793 | 37799 |
-| wire | 1426 | 1397 | 1143 | 1426 | 1588 | 1084 | 1145 | 1145 |
+| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 | granite | gpt-oss-20b | glm-4.7-flash | gpt-oss-20b-low |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| markup | 5064 | 4789 | 4532 | 5064 | n/a | 4292 | 4534 | 4323 | 4534 |
+| json | 2482 | 2398 | 2153 | 2483 | 3261 | 2036 | 2155 | 2067 | 2155 |
+| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a | 37102 | 37793 | 37217 | 37799 |
+| wire | 1426 | 1397 | 1143 | 1426 | 1588 | 1084 | 1145 | 1115 | 1145 |
 
 ## Token-normalized result
 
@@ -134,13 +144,18 @@ Checker-passing tasks per 1,000 combined input and output tokens, by model and i
 | gpt-oss-20b | flight/json | 0.242 |
 | gpt-oss-20b | wire/json | 1.626 |
 | gpt-oss-20b | wire/wire | 1.115 |
+| glm-4.7-flash | markup/json | 1.007 |
+| glm-4.7-flash | json/json | 1.959 |
+| glm-4.7-flash | flight/json | 0.218 |
+| glm-4.7-flash | wire/json | 2.145 |
+| glm-4.7-flash | wire/wire | 0.843 |
 | gpt-oss-20b-low | markup/json | 1.068 |
 | gpt-oss-20b-low | json/json | 1.684 |
 | gpt-oss-20b-low | flight/json | 0.234 |
 | gpt-oss-20b-low | wire/json | 1.772 |
 | gpt-oss-20b-low | wire/wire | 1.146 |
 
-Highest observed rate: **qwen wire/json** (2.034 passes/1k tokens).
+Highest observed rate: **glm-4.7-flash wire/json** (2.145 passes/1k tokens).
 
 ## Five notable failures
 
@@ -246,6 +261,7 @@ say: Creating a three-step funnel with Visit → Signup → Purchase.
 - opus-5.5: claude-opus-5-5; temperature provider default (omitted); Anthropic Messages input_tokens / output_tokens (Anthropic tokenizer)
 - granite: @cf/ibm-granite/granite-4.0-h-micro; temperature 0; Workers AI response usage fields (model tokenizer)
 - gpt-oss-20b: @cf/openai/gpt-oss-20b; temperature 0; Workers AI response usage fields (model tokenizer)
+- glm-4.7-flash: @cf/zai-org/glm-4.7-flash; temperature 0; Workers AI response usage fields (model tokenizer)
 - gpt-oss-20b-low: @cf/openai/gpt-oss-20b; temperature 0; Workers AI response usage fields (model tokenizer)
 
 ### Rerun
