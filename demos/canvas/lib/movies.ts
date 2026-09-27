@@ -1,7 +1,7 @@
 // The movies vocabulary: the agent decides WHAT to show — a query and a chart —
 // and the page runs the query in zega. The rows never pass through the model.
-// ZQL has no sorting or aggregation, so those live in the view spec (sort,
-// limit, sum/count/avg of a field), applied to zega's rows by the page.
+// ZQL can sort query rows with order by. Aggregation remains in the view spec
+// (sum/count/avg of a field), applied to zega's rows by the page.
 import { createStore, createViewport, createWire, defineComponent, defineSource, Rejected, type Size } from 'rixse';
 import { getZega } from './zega.ts';
 
@@ -187,7 +187,7 @@ ZQL, the read queries you may write:
 - Tests: = != > < >= <=, &&, ||, parentheses. Text: field findLike "x" (case-insensitive substring; prefer it for names and titles).
 - Follow a relationship inside the braces with its own arrow: { Movie(title findLike "Titanic") limit 100000 { title cast -> Person { name } } } and { Person(name findLike "Tom Hanks") limit 100000 { name acted_in <- Movie { title year } } }.
 - Filter across a relationship with has: Movie(has cast(name findLike "Tom Hanks") && has cast(name findLike "Meg Ryan")). has genres(name findLike "animated").
-- There is NO sort, count, sum or group in ZQL: fetch the rows and let the component do it with value ("sum(movies.gross)", "count(acted_in)"), sort and limit. Rows with the same label are grouped and summed.`,
+- Sort query rows with order by before limit, e.g. { Movie order by gross desc limit 10 { title gross } }. For chart ordering, use the component's sort; aggregation (sum/count/avg) and grouping stay in the component, e.g. value "sum(movies.gross)" or "count(acted_in)".`,
   query: 'one ZQL read query, shaped { Type(filter) limit 100000 { field rel -> Type { field } } }',
   run: (query) => {
     const z = getZega();
@@ -274,7 +274,7 @@ ${moviesViewport.catalogue()}
 Examples:
 - Box office over time for a few genres, big drops flagged: kind line, query { Genre(name = "superhero" || name = "science fiction") limit 100000 { name movies <- Movie { year gross } } }, label "name", x "movies.year", value "sum(movies.gross)", flag "drops", notes "2020:Theaters close".
 - One film's box office: kind stat, query { Movie(title findLike "Titanic") limit 100000 { title gross } }, label "title", value "gross".
-- Top 10 by box office: kind bar, query { Movie limit 100000 { title gross } }, label "title", value "gross", limit 10.
+- Top 10 by box office: kind bar, query { Movie order by gross desc limit 10 { title gross } }, label "title", value "gross", limit 10.
 - Box office by genre: kind pie, query { Genre limit 100000 { name movies <- Movie { gross } } }, label "name", value "sum(movies.gross)", limit 8.
 - Films two actors share: kind graph, query { Movie(has cast(name findLike "A") && has cast(name findLike "B")) limit 100000 { title cast -> Person { name } } }.
 - A director's films: kind table, query { Person(name findLike "Christopher Nolan") limit 100000 { name directed <- Movie { title year gross } } }.`;
