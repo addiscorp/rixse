@@ -164,6 +164,19 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
   const sim = useRef<ReturnType<typeof forceSimulation<GNode>> | null>(null);
   // Whether the last press moved: a drag must not also count as a click.
   const lastMoved = useRef(false);
+  // zega's fit: frame the whole graph while the layout runs and when it
+  // settles, unless the reader has zoomed, panned or dragged since.
+  const interacted = useRef(false);
+  const fit = () => {
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    if (!xs.length || xs.some((x) => !Number.isFinite(x))) return;
+    const minX = Math.min(...(xs as number[])) - 70, maxX = Math.max(...(xs as number[])) + 70;
+    const minY = Math.min(...(ys as number[])) - 70, maxY = Math.max(...(ys as number[])) + 70;
+    const w = maxX - minX || 1, h = maxY - minY || 1;
+    const k = Math.min(W / w, H / h, 1.4);
+    setView({ k, x: (W - w * k) / 2 - minX * k, y: (H - h * k) / 2 - minY * k });
+  };
+  const fitRef = useRef(fit); fitRef.current = fit;
   const W = 720, H = 460;
   useEffect(() => { setPhys(loadPhys()); }, []);
 
@@ -177,6 +190,11 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
       .force('x', forceX(W / 2).strength(phys.gravity / 100))
       .force('y', forceY(H / 2).strength(phys.gravity / 100))
       .alphaDecay(nodes.length > 60 ? 0.012 : 0.0228);
+    let ticks = 0;
+    interacted.current = false;
+    // Keep the graph framed while the layout spreads out (every 8 ticks), until the reader takes over.
+    s.on('tick.fit', () => { if (!interacted.current && ticks++ % 8 === 0) fitRef.current(); });
+    s.on('end.fit', () => { if (!interacted.current) fitRef.current(); });
     sim.current = s;
     return () => { s.stop(); };
     // Physics changes are applied in place below, without restarting the layout.
@@ -243,12 +261,13 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
       <div className="relative">
         <svg
           ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded-lg bg-muted/30 touch-none select-none cursor-grab" role="img" aria-label="graph of movies and people"
-          onWheel={(e) => { e.preventDefault(); const { px, py } = toGraphXY(e); zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, px, py); }}
+          onWheel={(e) => { e.preventDefault(); interacted.current = true; const { px, py } = toGraphXY(e); zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, px, py); }}
           onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'pan', sx: px, sy: py, ox: view.x, oy: view.y, moved: false }; }}
           onPointerMove={(e) => {
             const d = drag.current; if (!d) return;
             const { x, y, px, py } = toGraphXY(e);
             if (Math.abs(px - d.sx) + Math.abs(py - d.sy) > 3) d.moved = true;
+            if (d.moved) interacted.current = true;
             if (d.kind === 'pan') setView((vv) => ({ ...vv, x: d.ox + px - d.sx, y: d.oy + py - d.sy }));
             else { const n = nodes.find((nn) => nn.id === d.id); if (n) { n.fx = x; n.fy = y; sim.current?.alphaTarget(0.25).restart(); } }
           }}
@@ -287,8 +306,9 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
         </svg>
         <div className="absolute right-2 top-2 flex flex-col gap-1">
           <button type="button" title="layout settings" aria-expanded={panel} onClick={() => setPanel((o) => !o)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">⚙</button>
-          <button type="button" title="zoom in" onClick={() => zoomBy(1.12)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">+</button>
-          <button type="button" title="zoom out" onClick={() => zoomBy(1 / 1.12)} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">−</button>
+          <button type="button" title="fit the graph" onClick={() => { interacted.current = false; fit(); }} className="size-7 rounded-md border bg-background/90 text-xs text-foreground">⤢</button>
+          <button type="button" title="zoom in" onClick={() => { interacted.current = true; zoomBy(1.12); }} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">+</button>
+          <button type="button" title="zoom out" onClick={() => { interacted.current = true; zoomBy(1 / 1.12); }} className="size-7 rounded-md border bg-background/90 text-sm text-foreground">−</button>
         </div>
         {panel && (
           <div className="absolute right-11 top-2 w-60 rounded-lg border bg-background/95 p-3 shadow-sm grid gap-2 text-xs text-foreground" role="group" aria-label="Layout physics">
@@ -303,7 +323,7 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">Click a node to select it and fade the rest · click an edge to highlight it · shift-click to add · click the background to clear · drag to move · scroll or +/− to zoom · ⚙ layout. The agent can see what you select.</p>
+      <p className="text-xs text-muted-foreground">Click a node to select it and fade the rest · click an edge to highlight it · shift-click to add · click the background to clear · drag to move · scroll or +/− to zoom · ⤢ fit · ⚙ layout. The agent can see what you select.</p>
     </div>
   );
 }
