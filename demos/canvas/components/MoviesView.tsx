@@ -136,7 +136,6 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
   const { nodes, links } = useMemo(() => toGraph(rows), [rows]);
   const [, tick] = useState(0);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
-  const [hover, setHover] = useState<string | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<{ kind: 'pan' | 'node'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
   const sim = useRef<ReturnType<typeof forceSimulation<GNode>> | null>(null);
@@ -165,7 +164,8 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
     }
     return m;
   }, [L]);
-  const focus = hover ?? (selected.length === 1 && !selected[0]!.includes(' > ') ? selected[0]! : null);
+  // Highlighting follows the selection only (a click), never hover: hovering a dense graph flickers.
+  const focus = selected.length === 1 && !selected[0]!.includes(' > ') ? selected[0]! : null;
   const lit = (id: string) => !focus || id === focus || neighbours.get(focus)?.has(id) || sel.has(id);
 
   const toGraphXY = (e: { clientX: number; clientY: number }) => {
@@ -212,18 +212,18 @@ function GraphView({ rows, v, store, selected }: { rows: unknown[]; v: View; sto
             const r = n.type === 'movie' ? 9 : 5 + Math.min(4, n.degree);
             return (
               <g key={n.id} transform={`translate(${n.x ?? W / 2},${n.y ?? H / 2})`} className="cursor-pointer" opacity={dim ? 0.2 : 1}
-                onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
                 onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); const { px, py } = toGraphXY(e); drag.current = { kind: 'node', id: n.id, sx: px, sy: py, ox: 0, oy: 0, moved: false }; }}
                 onClick={(e) => { e.stopPropagation(); if (!lastMoved.current) choose(n.id, e.shiftKey); }}>
                 {on && <circle r={r + 5} fill="none" stroke={PALETTE[1]} strokeWidth={2.5 / view.k} />}
                 <circle r={r} fill={n.type === 'movie' ? PALETTE[0] : PALETTE[4]} />
-                {(n.type === 'movie' || n.degree > 1 || on || n.id === hover) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
+                <title>{n.label}</title>
+                {(n.type === 'movie' || n.degree > 1 || on) && <text y={-r - 4} textAnchor="middle" className="fill-foreground pointer-events-none" style={{ fontSize: 10 / Math.sqrt(view.k), fontWeight: on ? 600 : 400 }}>{n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label}</text>}
               </g>
             );
           })}
         </g>
       </svg>
-      <p className="text-xs text-muted-foreground">Click a node or edge to select it · shift-click to add · drag to move · scroll to zoom · drag the background to pan. The agent can see what you select.</p>
+      <p className="text-xs text-muted-foreground">Click a node or edge to select it and light up its links · shift-click to add · click the background to clear · drag to move · scroll to zoom · drag the background to pan. The agent can see what you select.</p>
     </div>
   );
 }
