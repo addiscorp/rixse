@@ -8,8 +8,8 @@ type Turn = { role: 'user' | 'assistant'; content: string; footnote?: string };
 type Timing = { readBody: number; buildPrompt: number; model: number; parse: number; server: number };
 type Proposal = { timing?: Timing; say: string; actions: { type: string; payload?: unknown }[]; ms: number; model: string; usage?: { input: number; output: number }; parseError?: boolean; error?: string };
 type Format = 'wire' | 'json';
-type Model = 'gemma' | 'oss' | 'glm' | 'opus';
-const MODEL_LABEL: Record<Model, string> = { gemma: 'Gemma 4', oss: 'gpt-oss 20B', glm: 'GLM 4.7 Flash', opus: 'Opus 5.5' };
+type Model = 'gemma' | 'glm' | 'opus';
+const MODEL_LABEL: Record<Model, string> = { gemma: 'Gemma 4', glm: 'GLM 4.7 Flash', opus: 'Opus 5.5' };
 const fmt = (n: number) => n.toLocaleString('en-US');
 
 export function Chat<S>({ store, wire, brief, describe, note, hint }: { store: Store<S>; wire: Wire<S>; brief: string; describe: (state: S) => string; hint: string; note: (n: Omit<Note, 'at' | 'order'>) => void }) {

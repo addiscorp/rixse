@@ -7,7 +7,6 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 const MODELS = {
   gemma: { label: 'Gemma 4 26B', id: '@cf/google/gemma-4-26b-a4b-it' },
-  oss: { label: 'gpt-oss 20B (low effort)', id: '@cf/openai/gpt-oss-20b' },
   glm: { label: 'GLM-4.7 Flash', id: '@cf/zai-org/glm-4.7-flash' },
   opus: { label: 'Opus 5.5', id: 'claude-opus-5-5' },
 } as const;
@@ -153,7 +152,7 @@ export async function POST(request: Request) {
         } else {
           const { env } = getCloudflareContext() as unknown as { env: { AI?: { run(model: string, input: unknown): Promise<unknown> } } };
           if (!env.AI) throw new Error('The AI binding is missing (run with wrangler credentials).');
-          const out = await env.AI.run(MODELS[key].id, { messages: [{ role: 'system', content: sys }, ...turns], max_tokens: 4096, temperature: 0, stream: true, ...(key === 'oss' ? { reasoning_effort: 'low' } : { chat_template_kwargs: { enable_thinking: false } }) });
+          const out = await env.AI.run(MODELS[key].id, { messages: [{ role: 'system', content: sys }, ...turns], max_tokens: 4096, temperature: 0, stream: true, chat_template_kwargs: { enable_thinking: false } });
           await sse(out as ReadableStream<Uint8Array>, (e) => {
             onText(e.choices?.[0]?.delta?.content ?? (typeof e.response === 'string' ? e.response : ''));
             const u = e.usage;

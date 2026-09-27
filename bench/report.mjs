@@ -5,6 +5,10 @@ import { tasks } from './tasks.ts';
 const files = await readdir('bench/results');
 const entries = await Promise.all(files.filter((name) => name.endsWith('.json')).map(async (filename) => ({ filename, ...JSON.parse(await readFile(`bench/results/${filename}`, 'utf8')) })));
 const data = newestCompleteRun(entries);
+// Dropped from the benchmark (Sami, 26 Sep): their raw rows stay in bench/results.
+const DROPPED = new Set(['gpt-oss', 'granite', 'gpt-oss-20b', 'gpt-oss-20b-low']);
+data.models = data.models.filter((m) => !DROPPED.has(m.key));
+data.rows = data.rows.filter((r) => !DROPPED.has(r.model));
 if (!data) throw new Error('No complete benchmark result file exists');
 const combinations = [...new Set(data.rows.map((r) => `${r.input}/${r.output}`))];
 const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
