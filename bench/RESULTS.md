@@ -1,6 +1,6 @@
-# Benchmark results — 2026-09-27T01-19-18-784Z
+# Benchmark results — 2026-09-27T01-26-01-090Z
 
-Completed measurements: 560. Proxy model calls in this run: 620. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T01-19-18-784Z.json**.
+Completed measurements: 760. Proxy model calls in this run: 820. Fixed tasks: 20. Flight is a React Server Components payload rendered from the same element tree used for markup. The result file is **2026-09-27T01-26-01-090Z.json**.
 
 ## Summary by model
 
@@ -64,16 +64,36 @@ Metrics average model-reported API token counts and latency. First-try validity 
 | wire/json | 413.2 | 45.3 | 1381.4 | 93.3% | 75.0% | 0 |
 | wire/wire | 448.2 | 30.4 | 891.6 | 7.3% | 10.0% | 0 |
 
+### gpt-oss-20b (@cf/openai/gpt-oss-20b)
+
+| Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
+|---|---:|---:|---:|---:|---:|---:|
+| markup/json | 873.3 | 128.6 | 1024.5 | 100.0% | 100.0% | 0 |
+| json/json | 535.4 | 112.1 | 876.1 | 100.0% | 95.0% | 0 |
+| flight/json | 3987.8 | 147.8 | 1125.7 | 100.0% | 100.0% | 0 |
+| wire/json | 473.9 | 141.1 | 1076.0 | 100.0% | 100.0% | 0 |
+| wire/wire | 507.9 | 209.4 | 1495.0 | 66.7% | 80.0% | 0 |
+
+### gpt-oss-20b-low (@cf/openai/gpt-oss-20b)
+
+| Input / output | Mean input tokens | Mean output tokens | P50 latency (ms) | First-try valid | Task pass | Request errors |
+|---|---:|---:|---:|---:|---:|---:|
+| markup/json | 873.3 | 62.6 | 586.6 | 100.0% | 100.0% | 0 |
+| json/json | 535.4 | 58.3 | 558.9 | 100.0% | 100.0% | 0 |
+| flight/json | 3988.0 | 70.2 | 757.9 | 100.0% | 95.0% | 0 |
+| wire/json | 473.9 | 62.3 | 574.7 | 100.0% | 95.0% | 0 |
+| wire/wire | 507.9 | 59.3 | 614.2 | 52.0% | 65.0% | 0 |
+
 ## Input size for the 60-card state
 
 API input tokens for task `sixty-card`, JSON output only. Counts are model-tokenizer-specific. A context overflow is reported as a failed-by-size result.
 
-| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 | granite |
-|---|---:|---:|---:|---:|---:|---:|
-| markup | 5064 | 4789 | 4532 | 5064 | n/a | 4292 |
-| json | 2482 | 2398 | 2153 | 2483 | 3261 | 2036 |
-| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a | 37102 |
-| wire | 1426 | 1397 | 1143 | 1426 | 1588 | 1084 |
+| Input format | gemma | qwen | gpt-oss | gemma-repeat | opus-5.5 | granite | gpt-oss-20b | gpt-oss-20b-low |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| markup | 5064 | 4789 | 4532 | 5064 | n/a | 4292 | 4534 | 4534 |
+| json | 2482 | 2398 | 2153 | 2483 | 3261 | 2036 | 2155 | 2155 |
+| flight | 44180 | does not fit: 32,769 tokens > 32,768 | 37790 | 44185 | n/a | 37102 | 37793 | 37799 |
+| wire | 1426 | 1397 | 1143 | 1426 | 1588 | 1084 | 1145 | 1145 |
 
 ## Token-normalized result
 
@@ -109,6 +129,16 @@ Checker-passing tasks per 1,000 combined input and output tokens, by model and i
 | granite | flight/json | 0.064 |
 | granite | wire/json | 1.636 |
 | granite | wire/wire | 0.209 |
+| gpt-oss-20b | markup/json | 0.998 |
+| gpt-oss-20b | json/json | 1.467 |
+| gpt-oss-20b | flight/json | 0.242 |
+| gpt-oss-20b | wire/json | 1.626 |
+| gpt-oss-20b | wire/wire | 1.115 |
+| gpt-oss-20b-low | markup/json | 1.068 |
+| gpt-oss-20b-low | json/json | 1.684 |
+| gpt-oss-20b-low | flight/json | 0.234 |
+| gpt-oss-20b-low | wire/json | 1.772 |
+| gpt-oss-20b-low | wire/wire | 1.146 |
 
 Highest observed rate: **qwen wire/json** (2.034 passes/1k tokens).
 
@@ -154,28 +184,31 @@ say: Here is a simple three‑step funnel.
 = c2 c3
 ~~~
 
-### qwen · wire/wire · column
+### gpt-oss-20b · wire/wire · funnel
 
-Checker: fail; rejection: unknown operation I'll
+Checker: fail; rejection: card.add requires the card keyword
 
 ~~~text
-I'll arrange the three steps in a column, one below the other.
+say: Creating a three-step funnel with Visit → Signup → Purchase
 
-+ c1 card "Discover" x=10 y=20
-+ c2 card "Evaluate" x=10 y=150
-+ c3 card "Buy" x=10 y=280
++ c1 "Visit" plain
++ c2 "Signup" plain
++ c3 "Purchase" plain
+= c1 c2 "next"
+= c2 c3 "next"
 ~~~
 
-### granite · wire/wire · column
+### gpt-oss-20b-low · wire/wire · funnel
 
-Checker: fail; rejection: unknown operation Here
+Checker: fail; rejection: card.add requires the card keyword
 
 ~~~text
-Here is the canvas with the three steps arranged in a column:
-
-!c1 c1 "Discover" plain 10,20 
->c2 c2 "Evaluate" plain 300,150 
->c3 c3 "Buy" plain 600,300
+say: Creating a three-step funnel with Visit → Signup → Purchase.  
++ c1 "Visit" plain 200,200 "User visits the site"  
++ c2 "Signup" accent 600,200 "User signs up for an account"  
++ c3 "Purchase" good 1000,200 "User completes a purchase"  
+= c1 c2 "Next"  
+= c2 c3 "Next"
 ~~~
 
 
@@ -212,6 +245,8 @@ Here is the canvas with the three steps arranged in a column:
 - gemma-repeat: @cf/google/gemma-4-26b-a4b-it; temperature 0; Workers AI response usage fields (model tokenizer)
 - opus-5.5: claude-opus-5-5; temperature provider default (omitted); Anthropic Messages input_tokens / output_tokens (Anthropic tokenizer)
 - granite: @cf/ibm-granite/granite-4.0-h-micro; temperature 0; Workers AI response usage fields (model tokenizer)
+- gpt-oss-20b: @cf/openai/gpt-oss-20b; temperature 0; Workers AI response usage fields (model tokenizer)
+- gpt-oss-20b-low: @cf/openai/gpt-oss-20b; temperature 0; Workers AI response usage fields (model tokenizer)
 
 ### Rerun
 

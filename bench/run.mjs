@@ -21,6 +21,8 @@ const models = [
   { key: 'gemma-repeat', id: '@cf/google/gemma-4-26b-a4b-it', provider: 'workers', temperature: 0 },
   { key: 'opus-5.5', id: 'claude-opus-5-5', provider: 'anthropic', temperature: null },
   { key: 'granite', id: '@cf/ibm-granite/granite-4.0-h-micro', provider: 'workers', temperature: 0 },
+  { key: 'gpt-oss-20b', id: '@cf/openai/gpt-oss-20b', provider: 'workers', temperature: 0 },
+  { key: 'gpt-oss-20b-low', id: '@cf/openai/gpt-oss-20b', provider: 'workers', temperature: 0, extra: { reasoning_effort: 'low' } },
 ];
 const runId = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const outputPath = `bench/results/${runId}.json`;
@@ -103,7 +105,7 @@ async function call(model, messages) {
   const url = model.provider === 'anthropic' ? `${endpoint}/anthropic/v1/messages` : `${endpoint}/run/${model.id}`;
   const body = model.provider === 'anthropic'
     ? { model: model.id, max_tokens: 1200, messages: messages.filter((m) => m.role !== 'system'), system: messages.find((m) => m.role === 'system')?.content ?? '' }
-    : { messages, max_tokens: 1200, temperature: 0, chat_template_kwargs: { enable_thinking: false } };
+    : { messages, max_tokens: 1200, temperature: 0, chat_template_kwargs: { enable_thinking: false }, ...(model.extra ?? {}) };
   const started = performance.now();
   const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const responseBody = await response.text();
@@ -139,7 +141,7 @@ async function checkpoint(complete = false) {
   await writeFile(outputPath, JSON.stringify(output, null, 2) + '\n');
 }
 
-for (const model of models.filter((item) => (only ? item.key === only : item.key !== 'granite'))) {
+for (const model of models.filter((item) => (only ? item.key === only : !['granite', 'gpt-oss-20b', 'gpt-oss-20b-low'].includes(item.key)))) {
   const selected = model.provider === 'anthropic' ? [['json', 'json'], ['wire', 'json'], ['wire', 'wire']] : inputs.flatMap((format) => [['json', format], ...(format === 'wire' ? [['wire', format]] : [])].map(([output, input]) => [input, output]));
   for (const item of tasks) {
     const { store, initial } = makeTaskState(item);
