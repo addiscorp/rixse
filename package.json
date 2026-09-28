@@ -6,7 +6,7 @@
     "demos/*"
   ],
   "scripts": {
-    "test": "npm test -w rixse && node --test bench/*.test.js conformance/*.test.js",
+    "test": "npm test -w rixse && node --test bench/*.test.js conformance/*.test.js pack/*.test.js",
     "bench": "node --experimental-strip-types bench/run.mjs && node --experimental-strip-types bench/report.mjs",
     "demo": "npm run dev -w rixse-demo-canvas",
     "check-site": "node site/check-site.mjs"

@@ -1,13 +1,26 @@
 {
   "name": "rixse-react",
-  "version": "0.0.0",
-  "private": true,
-  "description": "React bindings for rixse.",
+  "version": "0.1.0",
+  "description": "React bindings for rixse: hooks that read a rixse store and re-render on its action log.",
+  "homepage": "https://rixse.dev",
+  "repository": "https://rixse.dev",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agentic-ui",
+    "react",
+    "hooks",
+    "rixse"
+  ],
+  "files": [
+    "src",
+    "index.d.ts",
+    "README.md"
+  ],
+  "main": "./src/index.js",
   "type": "module",
-  "main": "src/index.js",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
+      "types": "./index.d.ts",
       "default": "./src/index.js"
     }
   },
@@ -15,6 +28,5 @@
     "react": ">=19",
     "rixse": "*"
   },
-  "license": "Apache-2.0",
-  "types": "./src/index.d.ts"
+  "types": "./index.d.ts"
 }
