@@ -1,7 +1,9 @@
 // Voice-bar acceptance (rixse#7, APS 6): the mic is the input surface, and
 // the keyboard is one gesture away. On the simulator on-device recognition
 // is unavailable, so the mic explains itself instead of recording; the
-// long-press keyboard path works everywhere.
+// long-press keyboard path works everywhere. Since rixse#9 the conversation
+// gets out of the way: the lasting transcript lives in Settings, and the one
+// ephemeral line above the mic (covered by UsabilityTests) fades by itself.
 import XCTest
 
 final class VoiceBarTests: XCTestCase {
@@ -31,11 +33,17 @@ final class VoiceBarTests: XCTestCase {
     let field = app.textFields["keyboardField"]
     XCTAssertTrue(field.waitForExistence(timeout: 5), "long-pressing the mic did not open the keyboard")
 
-    // Type and send: the message lands in the transcript and the keyboard closes.
+    // Type and send: the keyboard closes after sending.
     field.tap()
     field.typeText("hello from the keyboard")
     app.buttons["Send"].tap()
-    XCTAssertTrue(app.staticTexts["hello from the keyboard"].waitForExistence(timeout: 5), "the typed message never landed in the transcript")
     XCTAssertFalse(field.waitForExistence(timeout: 5), "the keyboard stayed open after sending")
+
+    // The lasting transcript is in Settings: the turn is in the history.
+    // (The ephemeral line above the mic is covered by UsabilityTests — the
+    // reply can land within a second and fade four seconds later, faster
+    // than this test's queries get there.)
+    app.buttons["settingsButton"].tap()
+    XCTAssertTrue(app.staticTexts["hello from the keyboard"].waitForExistence(timeout: 10), "the typed message never landed in the conversation history")
   }
 }

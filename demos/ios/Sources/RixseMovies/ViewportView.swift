@@ -46,31 +46,45 @@ struct ViewportView: View {
   var body: some View {
     GeometryReader { geo in
       let grid = layout(movies.state, width: geo.size.width)
-      ScrollView {
-        if movies.state.order.isEmpty {
-          Text("Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-          VStack(spacing: 12) {
-            ForEach(Array(rows(cells: grid.cells, cols: grid.cols).enumerated()), id: \.offset) { _, row in
-              HStack(alignment: .top, spacing: 12) {
-                ForEach(row, id: \.id) { cell in
-                  if let item = movies.state.items[cell.id] {
-                    ComponentCard(item: item)
-                      .frame(width: cellWidth(cell, in: grid.cols, container: geo.size.width), alignment: .top)
+      ScrollViewReader { proxy in
+        ScrollView {
+          if movies.state.order.isEmpty {
+            Text("Ask about movies, e.g. “top 10 movies by box office”, “box office by genre”, “movies Tom Hanks and Meg Ryan are both in”.")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .padding(24)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          } else {
+            VStack(spacing: 12) {
+              ForEach(Array(rows(cells: grid.cells, cols: grid.cols).enumerated()), id: \.offset) { _, row in
+                HStack(alignment: .top, spacing: 12) {
+                  ForEach(row, id: \.id) { cell in
+                    if let item = movies.state.items[cell.id] {
+                      ComponentCard(item: item)
+                        .frame(width: cellWidth(cell, in: grid.cols, container: geo.size.width), alignment: .top)
+                        .id(item.id)
+                    }
                   }
                 }
               }
             }
+            .padding(12)
           }
-          .padding(12)
         }
+        // The agent added or changed a component: the newest answer is what
+        // you see — scroll it into view (the card itself highlights). State
+        // lands a Task-hop after dispatch, so try on both signals; scrollTo
+        // is idempotent.
+        .onChange(of: movies.lastChange) { _, _ in scrollToLastChange(proxy) }
+        .onChange(of: movies.state.order) { _, _ in scrollToLastChange(proxy) }
       }
       .background(Color(uiColor: .systemGroupedBackground))
     }
+  }
+
+  private func scrollToLastChange(_ proxy: ScrollViewProxy) {
+    guard let change = movies.lastChange, movies.state.order.contains(change.view) else { return }
+    withAnimation { proxy.scrollTo(change.view) }
   }
 
   private func cellWidth(_ cell: LayoutCell, in cols: Int, container width: Double) -> CGFloat {
@@ -106,6 +120,16 @@ struct ComponentCard: View {
     .padding(12)
     .background(Color(uiColor: .secondarySystemGroupedBackground))
     .clipShape(RoundedRectangle(cornerRadius: 12))
+    // The component the agent just added or changed flashes a highlight.
+    .overlay(
+      RoundedRectangle(cornerRadius: 12)
+        .stroke(Color.accentColor, lineWidth: 2)
+        .opacity(movies.highlightedView == item.id ? 1 : 0)
+        .animation(.easeOut(duration: 0.3), value: movies.highlightedView)
+    )
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(item.title)
+    .accessibilityIdentifier("component.\(item.id)")
   }
 }
 
