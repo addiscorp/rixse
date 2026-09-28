@@ -25,7 +25,10 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js && tsc -p test/tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
   },
   "types": "./index.d.ts"
 }

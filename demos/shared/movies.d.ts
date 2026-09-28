@@ -30,7 +30,7 @@ export declare function hintFor(error: string, schema: string): string;
 
 export declare const zegaSource: SourceDef;
 export declare const movieComponents: import('rixse').ComponentSpec[];
-export declare const moviesViewport: ReturnType<typeof import('rixse').createViewport<View & Item>>;
+export declare const moviesViewport: ReturnType<typeof import('rixse').createViewport>;
 export declare const movieActions: ActionDef<ViewportState<View & Item>, any>[];
 export declare function runQuery(query: string): unknown[];
 export declare function moviesBrief(schema: string): string;

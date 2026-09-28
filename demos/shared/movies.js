@@ -302,6 +302,7 @@ export function createMoviesWire() {
 }
 
 export function createMoviesStore() {
+  // Items carry each kind's own params, so the page reads them through View.
   return createStore({ initial: moviesViewport.initial(), actions: movieActions });
 }
 /** @typedef {ReturnType<typeof createMoviesStore>} MoviesStore */
