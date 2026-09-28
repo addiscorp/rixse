@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base href="/docs/"><title>Components · rixse docs</title><meta name="description" content="Components are the agent’s visual vocabulary. The renderer owns pixels; the agent picks a kind, data query, parameters and size."><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="docs.css"></head><body><div class="shell"><aside><a class="brand" href="../index.html"><span class="dots" aria-hidden="true"><i></i><i></i></span>rixse docs</a><nav aria-label="Documentation"><a href="index.html">Overview</a><a href="components.html" aria-current="page">Components</a><a href="sources.html">Sources</a><a href="viewport.html">Viewport API</a><a href="selection-voice.html">Selection & voice</a><a href="platforms.html">Platforms</a></nav><p class="aside-note">Documentation describes merged main. APS proposals are labeled as drafts.</p></aside><div class="mobile-nav"><details><summary>rixse docs · navigate</summary><nav aria-label="Documentation"><a href="index.html">Overview</a><a href="components.html" aria-current="page">Components</a><a href="sources.html">Sources</a><a href="viewport.html">Viewport API</a><a href="selection-voice.html">Selection & voice</a><a href="platforms.html">Platforms</a></nav></details></div><main><div class="eyebrow">Documentation · main</div><h1>Components</h1><p class="lede">Components are the agent’s visual vocabulary. The renderer owns pixels; the agent picks a kind, data query, parameters and size.</p><h2>Define the vocabulary</h2><p><code>defineComponent(kind, def)</code> returns a component specification. Its definition names the supported sizes, optional default size, parameters, source, identity fields, selection description and optional row check.</p><pre><code>import { defineComponent } from 'rixse';
+
+const bar = defineComponent('bar', {
+  describe: 'Compare amounts across things.',
+  sizes: ['medium', 'large', 'viewport'],
+  source: 'zega',
+  identity: ['query'],
+  params: { label: { type: 'string' }, value: { type: 'string' } }
+});</code></pre>
+<h2>The size ladder</h2><div class="ladder"><div><b>viewport</b><small>fills the container</small></div><div><b>large</b><small>2 columns × 2 rows</small></div><div><b>medium</b><small>2 columns × 1 row</small></div><div><b>small</b><small>1 column × 1 row</small></div></div><p>Large, medium and small keep the same shape on each platform. A viewport fills the container and owns its contents. Components declare which sizes they support; the Movies line supports large and viewport, while a bar supports medium, large and viewport.</p>
+<h2>Layout follows the container</h2><p><code>layout(state, width, bands?)</code> is a pure function. It picks a column count from width bands, then maps the state’s ordered items to cells. Width is the viewport container width, not the device screen width.</p><pre><code>import { layout } from 'rixse';
+
+const state = { items: { top: { size: 'large' } }, order: ['top'], selection: null };
+layout(state, 800, [
+  { min: 0, cols: 2 },
+  { min: 720, cols: 4 },
+  { min: 1280, cols: 6 }
+]);
+// { cols: 4, cells: [{ id, cols, rows }, ...] }</code></pre>
+<h2>Ensure by identity</h2><p>A component may name <code>identity</code> fields, such as <code>['query']</code>. When a component with the same kind and identity already exists, <code>view.show</code> rejects the duplicate and tells the agent to reuse the existing id. Reusing that id updates the component in place. This is ensure-by-identity in the current viewport API.</p>
+<div class="callout"><strong>Draft status:</strong> APS 4 PR #5 is open and describes the proposed size and identity direction. It is a draft, not a settled APS entry. This page describes the merged implementation.</div><footer><a href="../index.html">rixse home</a> · Source: <a href="https://github.com/rixsedev/rixse">rixsedev/rixse</a></footer></main></div></body></html>
