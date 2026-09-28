@@ -19,6 +19,21 @@ struct ChatTurn: Identifiable {
   var footnote: String?
 }
 
+/// The latest message and the agent's short reply — the ephemeral line above
+/// the mic reads this (APS 6). A new id per message so repeat sends re-fire.
+struct ChatExchange: Equatable {
+  let id = UUID()
+  var sent: String
+  var reply: String?
+}
+
+/// The component the agent just added or changed — the viewport scrolls it
+/// into view and highlights it. A new id per change so repeat changes re-fire.
+struct ViewChange: Equatable {
+  let id = UUID()
+  let view: String
+}
+
 @MainActor
 final class MovieStore: ObservableObject {
   @Published private(set) var state: ViewportState
@@ -27,8 +42,16 @@ final class MovieStore: ObservableObject {
   @Published var turns: [ChatTurn] = []
   @Published var busy = false
   @Published var model = "gemma"
+  /// The latest sent message + the agent's reply, for the ephemeral line.
+  @Published var lastExchange: ChatExchange?
+  /// The component the agent last added or changed (scroll + highlight).
+  @Published private(set) var lastChange: ViewChange?
+  /// Set while a changed component shows its highlight ring.
+  @Published private(set) var highlightedView: String?
   /// Script progress, mirrored to a hidden view so UI tests can wait on it.
   @Published var scriptStatus = ""
+
+  private var highlightTask: Task<Void, Never>?
 
   let catalogue: MoviesCatalogue
   let engine: Zega
@@ -62,7 +85,22 @@ final class MovieStore: ObservableObject {
   @discardableResult
   func dispatch(_ action: Action, _ author: Author, why: String? = nil) -> DispatchResult {
     do {
-      return try catalogue.store.dispatch(action, author: author, why: why)
+      let result = try catalogue.store.dispatch(action, author: author, why: why)
+      // An agent change to a component scrolls it into view and highlights
+      // it: the newest answer is what you see (APS 6). view.add/move/resize/
+      // remove carry "id", select.set carries "view".
+      if result.ok, author == .agent,
+         let view = action.payload["id"]?.stringValue ?? action.payload["view"]?.stringValue {
+        lastChange = ViewChange(view: view)
+        highlightTask?.cancel()
+        highlightedView = view
+        highlightTask = Task { @MainActor [weak self] in
+          try? await Task.sleep(for: .milliseconds(1600))
+          guard !Task.isCancelled, let self, self.highlightedView == view else { return }
+          self.highlightedView = nil
+        }
+      }
+      return result
     } catch {
       note(.error, "dispatch failed: \(error)", nil)
       return .rejected("\(error)")

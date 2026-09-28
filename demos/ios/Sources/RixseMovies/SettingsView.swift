@@ -1,21 +1,36 @@
-// The logs sheet: every store event and agent note, newest first, with the
-// same information the web demo's Logs pane shows (kind, author, text).
+// The Settings sheet (rixse#9, APS 6): the conversation gets out of the way —
+// the canvas owns the screen, and everything else lives behind the gear:
+// Undo of the last agent change, the model switch, the conversation history,
+// and the logs and latency lines (kind, author, text) the logs sheet had.
 import SwiftUI
 import Rixse
 
-struct LogsView: View {
+struct SettingsView: View {
   @EnvironmentObject var movies: MovieStore
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
     NavigationStack {
       List {
+        Section {
+          Button { movies.undo() } label: {
+            Label("Undo last change", systemImage: "arrow.uturn.backward")
+          }
+          .disabled(!movies.log.contains { !$0.undone })
+          .accessibilityIdentifier("undoRow")
+        }
         Section("Model") {
           Picker("Model", selection: $movies.model) {
             Text("Gemma 4").tag("gemma")
             Text("Opus 5.5").tag("opus")
           }
           .pickerStyle(.segmented)
+        }
+        Section("Conversation (\(movies.turns.count))") {
+          ForEach(movies.turns) { turn in
+            TurnBubble(turn: turn)
+              .listRowSeparator(.hidden)
+          }
         }
         Section("Action log (\(movies.log.count))") {
           ForEach(movies.log.reversed(), id: \.seq) { entry in
@@ -49,7 +64,7 @@ struct LogsView: View {
         }
       }
       .listStyle(.insetGrouped)
-      .navigationTitle("Logs")
+      .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -76,6 +91,33 @@ struct LogsView: View {
     case .undone: return .secondary
     case .agent: return .accentColor
     case .error: return .red
+    }
+  }
+}
+
+/// One conversation turn, user right / agent left — inside Settings now, never
+/// over the canvas.
+struct TurnBubble: View {
+  let turn: ChatTurn
+
+  var body: some View {
+    HStack {
+      if turn.role == "user" { Spacer(minLength: 40) }
+      VStack(alignment: .leading, spacing: 2) {
+        Text(turn.content)
+          .font(.callout)
+          .foregroundStyle(turn.role == "user" ? .white : .primary)
+        if let footnote = turn.footnote {
+          Text(footnote)
+            .font(.caption2)
+            .foregroundStyle(turn.role == "user" ? .white.opacity(0.8) : .secondary)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(turn.role == "user" ? Color.accentColor : Color(.secondarySystemBackground))
+      .clipShape(RoundedRectangle(cornerRadius: 14))
+      if turn.role != "user" { Spacer(minLength: 40) }
     }
   }
 }

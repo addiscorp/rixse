@@ -42,7 +42,7 @@ struct RootView: View {
 
 struct ContentView: View {
   @EnvironmentObject var movies: MovieStore
-  @State private var showLogs = false
+  @State private var showSettings = false
 
   var body: some View {
     NavigationStack {
@@ -50,23 +50,18 @@ struct ContentView: View {
         .navigationTitle("rixse · movies")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-          ToolbarItem(placement: .topBarLeading) {
-            Button { movies.undo() } label: {
-              Label("Undo", systemImage: "arrow.uturn backward")
-            }
-            .disabled(!movies.log.contains { !$0.undone })
-          }
           ToolbarItem(placement: .topBarTrailing) {
-            Button { showLogs = true } label: {
-              Label("Logs", systemImage: "list.bullet.rectangle")
+            Button { showSettings = true } label: {
+              Label("Settings", systemImage: "gearshape")
             }
+            .accessibilityIdentifier("settingsButton")
           }
         }
         .safeAreaInset(edge: .bottom) {
           VoiceBar()
         }
-        .sheet(isPresented: $showLogs) {
-          LogsView()
+        .sheet(isPresented: $showSettings) {
+          SettingsView()
         }
         .task {
           let args = ProcessInfo.processInfo.arguments
@@ -74,11 +69,22 @@ struct ContentView: View {
           await movies.runScript(named: args[i + 1])
         }
         .background(
-          Text(movies.scriptStatus)
-            .accessibilityIdentifier("scriptStatus")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+          ZStack {
+            Text(movies.scriptStatus)
+              .accessibilityIdentifier("scriptStatus")
+            Text(viewportDebug)
+              .accessibilityIdentifier("viewportDebug")
+          }
+          .frame(width: 1, height: 1)
+          .opacity(0.01)
         )
     }
+  }
+
+  /// What the UI tests read: the views in order with their kinds, then the
+  /// component the agent last changed — "v1:bar|v2:table>v2".
+  private var viewportDebug: String {
+    let views = movies.state.order.map { "\($0):\(movies.state.items[$0]?.kind ?? "?")" }.joined(separator: "|")
+    return "\(views)>\(movies.lastChange?.view ?? "-")"
   }
 }

@@ -118,6 +118,7 @@ extension MovieStore {
     }
     turns.append(ChatTurn(role: "user", content: message))
     turns.append(ChatTurn(role: "assistant", content: "…"))
+    lastExchange = ChatExchange(sent: message)
     do {
       let first = try await turn(message, history: history, retryOf: nil, attachSelection: attachSelection, t0: speechEnd ?? Date(), latencyPrefix: speechEnd == nil ? "" : "speech-end → ")
       var final = first
@@ -130,12 +131,14 @@ extension MovieStore {
       }
       let say = final.say.isEmpty ? first.say : final.say
       turns[turns.count - 1].content = say.isEmpty ? "(done)" : say
+      lastExchange?.reply = say.isEmpty ? "(done)" : say
       if !final.failed.isEmpty {
         turns[turns.count - 1].footnote = "\(final.failed.count) of \(final.total) changes didn't apply — see the logs."
       }
     } catch {
       note(.error, "agent: \(error.localizedDescription)")
       turns[turns.count - 1].content = "Couldn't reach the agent: \(error.localizedDescription)"
+      lastExchange?.reply = "Couldn't reach the agent."
     }
   }
 }
