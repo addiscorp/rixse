@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 
 // Install the browser with `npx playwright install chromium`; headless only.
 const root = resolve('site/public');
-const pages = ['/', '/docs/', ...[ 'components.html', 'sources.html', 'viewport.html', 'selection-voice.html', 'platforms.html' ].map((name) => `/docs/${name}`)];
+const pages = ['/', '/docs', '/docs/', ...[ 'components.html', 'sources.html', 'viewport.html', 'selection-voice.html', 'platforms.html' ].map((name) => `/docs/${name}`)];
 const widths = [1280, 390];
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 const server = createServer(async (req, res) => {
@@ -42,10 +42,10 @@ try {
       await page.goto(`${base}${path}`, { waitUntil: 'networkidle' });
       const dimensions = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
       assertNoOverflow(dimensions, width, path);
-      const hrefs = await page.locator('a[href]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
-      for (const href of hrefs) {
+      const hrefs = await page.locator('a[href]').evaluateAll((nodes) => nodes.map((node) => ({ href: node.getAttribute('href'), base: document.baseURI })));
+      for (const { href, base: hrefBase } of hrefs) {
         if (!href || /^(https?:|mailto:|tel:|data:|javascript:)/i.test(href)) continue;
-        const target = new URL(href, `${base}${path}`);
+        const target = new URL(href, hrefBase);
         if (target.origin !== base) continue;
         if (target.hash && (target.pathname === new URL(`${base}${path}`).pathname || !target.pathname)) {
           const found = await page.evaluate((id) => Boolean(document.getElementById(id)), decodeURIComponent(target.hash.slice(1)));
