@@ -4,7 +4,9 @@
 // available the mic stays off and the UI says so. End of speech sends by
 // itself (rixse#9): the EndOfSpeech detector ends the utterance on the
 // recognizer's final result or ~1.2 s with no new words, whichever comes
-// first, and the mic returns to idle the moment the audio stops.
+// first, and the mic returns to idle the moment the audio stops. No words at
+// all ends it too (rixse#13): ~6 s of silence from the tap stops the audio,
+// sends nothing, and the view says "Didn't catch that" briefly.
 import Foundation
 import Speech
 import AVFoundation
@@ -39,12 +41,15 @@ final class VoiceController: ObservableObject {
   /// EndOfSpeech.silenceAfter): the audio stops and the utterance is ready to
   /// send. The view sends it — there is no send-or-correct wait (rixse#9).
   var onEndOfSpeech: ((VoiceUtterance) -> Void)?
+  /// No speech at all for EndOfSpeech.noSpeechAfter (rixse#13): the audio has
+  /// stopped and nothing was sent; the view says "Didn't catch that" briefly.
+  var onNoSpeech: (() -> Void)?
 
   private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
   private let audioEngine = AVAudioEngine()
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var recognitionTask: SFSpeechRecognitionTask?
-  private var silenceTimer: Task<Void, Never>?
+  private var endTimer: Task<Void, Never>?
   private var selectionCancellable: AnyCancellable?
 
   private var detector = EndOfSpeech()
@@ -130,6 +135,9 @@ final class VoiceController: ObservableObject {
       return
     }
     recording = true
+    // No words yet: the no-speech clock runs from the tap (rixse#13). The
+    // first new words re-arm it as the silence clock.
+    armEndTimer(after: detector.noSpeechAfter)
 
     recognitionTask = recognizer?.recognitionTask(with: request) { [weak self] result, error in
       Task { @MainActor [weak self] in
@@ -146,7 +154,7 @@ final class VoiceController: ObservableObject {
           } else if self.detector.partial(self.liveTranscript, at: t) {
             // New words: the silence clock starts over. A re-emitted partial
             // with the same text does not touch it.
-            self.armSilenceTimer()
+            self.armEndTimer(after: self.detector.silenceAfter)
           }
         }
         if error != nil, self.recording {
@@ -156,21 +164,23 @@ final class VoiceController: ObservableObject {
     }
   }
 
-  private func armSilenceTimer() {
-    silenceTimer?.cancel()
-    let after = detector.silenceAfter
-    silenceTimer = Task { [weak self] in
-      try? await Task.sleep(for: .milliseconds(Int(after * 1000)))
+  private func armEndTimer(after interval: TimeInterval) {
+    endTimer?.cancel()
+    endTimer = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(Int(interval * 1000)))
       guard !Task.isCancelled, let self else { return }
       let t = Date().timeIntervalSince(self.startedAt)
       if self.detector.shouldEnd(at: t) != nil { self.endOfSpeech() }
     }
   }
 
-  /// The detector decided: stop the audio and hand the utterance to the view.
+  /// The detector decided: stop the audio. Words go to the view to send; a
+  /// no-speech end sends nothing and the view says so briefly (rixse#13).
   private func endOfSpeech() {
     guard recording else { return }
+    let noSpeech = detector.trigger == .noSpeech
     if let heard = finish() { onEndOfSpeech?(heard) }
+    else if noSpeech { onNoSpeech?() }
   }
 
   /// Stop listening and return what was heard — nil when there is nothing to send.
@@ -190,8 +200,8 @@ final class VoiceController: ObservableObject {
   }
 
   private func teardownAudio() {
-    silenceTimer?.cancel()
-    silenceTimer = nil
+    endTimer?.cancel()
+    endTimer = nil
     selectionCancellable?.cancel()
     selectionCancellable = nil
     recognitionTask?.cancel()

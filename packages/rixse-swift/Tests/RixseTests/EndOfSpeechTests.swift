@@ -56,11 +56,48 @@ import Rixse
     #expect(eos.transcript == "compare this")
   }
 
-  @Test func nothingHeardNeverEnds() {
-    var eos = EndOfSpeech(silenceAfter: 1.2)
-    let end = eos.shouldEnd(at: 10)
-    #expect(end == nil)
-    #expect(eos.trigger == nil)
+  @Test func nothingHeardEndsAtTheNoSpeechTimeout() {
+    // Tap the mic, say nothing (rixse#13): no partials ever arrive, so the
+    // silence clock never arms — without a no-speech timeout the utterance
+    // never ended and the mic stayed red forever. At ~6 s the detector gives
+    // up instead; the caller stops the audio and sends nothing.
+    var eos = EndOfSpeech(silenceAfter: 1.2, noSpeechAfter: 6)
+    let early1 = eos.shouldEnd(at: 0.5)
+    let early2 = eos.shouldEnd(at: 5.9)
+    let end = eos.shouldEnd(at: 6.0)
+    let decided = eos.shouldEnd(at: 7.0) // the decision sticks
+    #expect(early1 == nil && early2 == nil)
+    #expect(end == .noSpeech)
+    #expect(decided == .noSpeech)
+    #expect(eos.transcript.isEmpty)
+  }
+
+  @Test func emptyPartialsStillCountAsNoSpeech() {
+    // On-device the recognizer can re-emit empty partials while nothing is
+    // said; they must not arm the silence clock nor push the no-speech end
+    // out.
+    var eos = EndOfSpeech(silenceAfter: 1.2, noSpeechAfter: 6)
+    var reArmed = false
+    var t = 0.5
+    while t < 6 {
+      reArmed = reArmed || eos.partial("", at: t)
+      t += 0.5
+    }
+    let end = eos.shouldEnd(at: 6.0)
+    #expect(!reArmed)
+    #expect(end == .noSpeech)
+  }
+
+  @Test func wordsBeforeTheTimeoutEndBySilenceNotNoSpeech() {
+    // Words at 5 s, then quiet: the no-speech timeout passes at 6 s but the
+    // transcript is not empty, so the utterance ends by silence 1.2 s after
+    // the last word — and sends, as before.
+    var eos = EndOfSpeech(silenceAfter: 1.2, noSpeechAfter: 6)
+    _ = eos.partial("top ten movies", at: 5.0)
+    let atTimeout = eos.shouldEnd(at: 6.0)
+    let end = eos.shouldEnd(at: 6.21)
+    #expect(atTimeout == nil)
+    #expect(end == .silence)
   }
 }
 
