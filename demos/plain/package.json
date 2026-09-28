@@ -1,0 +1,15 @@
+{
+  "name": "rixse-demo-plain",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Movies demo with no framework: plain HTML + ES modules + rixse. Proof that rixse works without React.",
+  "type": "module",
+  "scripts": {
+    "dev": "node serve.mjs",
+    "test:e2e": "node --test e2e/"
+  },
+  "dependencies": {
+    "rixse": "*",
+    "rixse-demo-shared": "*"
+  }
+}
