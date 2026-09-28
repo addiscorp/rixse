@@ -1,0 +1,97 @@
+# Publishes rixse and rixse-react to npm. Manual only: Sami presses
+# "Run workflow" after a release-ready change lands on main.
+#
+# Publishing uses npm trusted publishing (OIDC): the job mints a short-lived
+# token through GitHub's OIDC provider and npm verifies it against the trusted
+# publisher configured on npmjs.com for each package. There is NO NPM_TOKEN
+# secret anywhere in this repo, and no --provenance flag (provenance is
+# automatic for a public package published from a public repo via OIDC).
+#
+# The filename is fixed: npm trusted publishing for rixse and rixse-react must
+# be configured against the workflow named `publish.yml` in rixsedev/rixse.
+# Renaming this file breaks the OIDC trust for both packages. Do not rename it.
+#
+# Needs Sami: the npm trusted publisher for rixse and rixse-react must be
+# created on npmjs.com pointing at rixsedev/rixse, this workflow
+# (`publish.yml`), and the `release` environment — publishing fails closed
+# until that exists.
+name: publish
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The full gate from package.json: rixse's unit tests plus the root
+      # bench/conformance/pack suites. No install step: every suite runs on
+      # relative imports and node builtins only.
+      - run: npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # OIDC: trusted publishing, no NPM_TOKEN
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1; setup-node's Node 22 ships an
+      # older npm. Pinned to a major on purpose (an unpinned @latest crossed
+      # 11 -> 12 mid-session once and changed npm pack --json's output).
+      - name: Use a npm that supports trusted publishing
+        run: |
+          npm install -g npm@12
+          npm --version
+
+      # Resumable: a prior run can have published one package and failed on
+      # the other. npm refuses to publish over an existing version
+      # (EPUBLISHCONFLICT), so check first and skip instead of failing.
+      - name: Publish rixse and rixse-react
+        run: |
+          set -euo pipefail
+          for pkg in rixse rixse-react; do
+            dir="packages/${pkg}"
+            VERSION="$(node -p "require('./${dir}/package.json').version")"
+            ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
+            if [ "$ON_REGISTRY" = "$VERSION" ]; then
+              echo "${pkg}@${VERSION} already on registry, skipping publish"
+            else
+              (cd "$dir" && npm publish --access public)
+            fi
+          done
+
+      # Read back: fail the run if a package this run published did not
+      # actually land on the registry (read replicas can lag a publish).
+      - name: Verify
+        run: |
+          set -euo pipefail
+          for pkg in rixse rixse-react; do
+            VERSION="$(node -p "require('./packages/${pkg}/package.json').version")"
+            for attempt in $(seq 1 20); do
+              ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
+              if [ "$ON_REGISTRY" = "$VERSION" ]; then
+                echo "${pkg}@${VERSION} is on the registry"
+                break
+              fi
+              if [ "$attempt" = "20" ]; then
+                echo "${pkg}@${VERSION} never appeared on the registry" >&2
+                exit 1
+              fi
+              sleep 15
+            done
+          done
