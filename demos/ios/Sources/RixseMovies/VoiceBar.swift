@@ -2,8 +2,10 @@
 // an opaque strip — the canvas is never under it. Tap to talk: end of speech
 // sends by itself. Hold to talk: release sends. One ephemeral line above the
 // mic — the live transcript while listening, then the sent text, then the
-// agent's short reply, which fades after ~4 s or on a tap. Correcting means
-// saying it again, or typing via long-press. History lives in Settings.
+// agent's short reply, which fades after ~4 s or on a tap. No words at all
+// ends the utterance after ~6 s and the line says "Didn't catch that"
+// briefly (rixse#13). Correcting means saying it again, or typing via
+// long-press. History lives in Settings.
 import SwiftUI
 import Rixse
 
@@ -17,6 +19,8 @@ struct VoiceBar: View {
   @State private var keyboardDraft = ""
   @State private var replyVisible = false
   @State private var replyFade: Task<Void, Never>?
+  @State private var missedVisible = false
+  @State private var missedFade: Task<Void, Never>?
   @State private var pulse = false
   @FocusState private var typing: Bool
 
@@ -45,7 +49,10 @@ struct VoiceBar: View {
     // Opaque: component content scrolls into this safe-area strip otherwise.
     .background(Color(uiColor: .systemGroupedBackground))
     .task { await voice.prepare() }
-    .onAppear { voice.onEndOfSpeech = autoSend }
+    .onAppear {
+      voice.onEndOfSpeech = autoSend
+      voice.onNoSpeech = showMissed
+    }
     .onChange(of: movies.lastExchange) { _, exchange in
       replyFade?.cancel()
       guard let exchange, exchange.reply != nil else { replyVisible = false; return }
@@ -64,6 +71,9 @@ struct VoiceBar: View {
   private var ephemeralLine: some View {
     if voice.recording, !voice.liveTranscript.isEmpty {
       line(text: voice.liveTranscript, icon: "waveform")
+    } else if missedVisible {
+      line(text: "Didn't catch that", icon: "mic.slash")
+        .onTapGesture { dismissMissed() }
     } else if let exchange = movies.lastExchange {
       if let reply = exchange.reply, replyVisible {
         line(text: reply, icon: "bubble.left")
@@ -96,6 +106,24 @@ struct VoiceBar: View {
   private func dismissReply() {
     replyFade?.cancel()
     withAnimation { replyVisible = false }
+  }
+
+  /// No words for ~6 s (rixse#13): the audio has already stopped and nothing
+  /// was sent — the line just explains it, then fades like the reply does.
+  private func showMissed() {
+    tapSession = false
+    missedFade?.cancel()
+    withAnimation { missedVisible = true }
+    missedFade = Task { @MainActor in
+      try? await Task.sleep(for: .seconds(4))
+      guard !Task.isCancelled else { return }
+      withAnimation { missedVisible = false }
+    }
+  }
+
+  private func dismissMissed() {
+    missedFade?.cancel()
+    withAnimation { missedVisible = false }
   }
 
   // MARK: mic — idle / listening / thinking at a glance
@@ -138,6 +166,7 @@ struct VoiceBar: View {
           guard pressBegan == nil else { return }
           pressBegan = Date()
           dismissReply()
+          dismissMissed()
           if available { voice.start(tracking: movies) }
         }
         .onEnded { _ in

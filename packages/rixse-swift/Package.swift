@@ -43,7 +43,7 @@ if let testing = swiftTestingDirs() {
 
 let package = Package(
   name: "Rixse",
-  platforms: [.macOS(.v14), .iOS(.v16)],
+  platforms: [.macOS(.v14), .iOS(.v17)],
   products: [.library(name: "Rixse", targets: ["Rixse"])],
   targets: [
     .target(name: "Rixse"),
