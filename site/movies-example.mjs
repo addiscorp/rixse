@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import init, { ZegaWasm } from '../demos/canvas/public/zega/zega_wasm.js';
-import { moviesBrief, createMoviesWire, createMoviesStore, zegaSource, series, lineData } from '../demos/canvas/lib/movies.ts';
+import { moviesBrief, createMoviesWire, createMoviesStore, zegaSource, series, lineData } from '../demos/shared/movies.js';
 const base = new URL('../demos/canvas/public/zega/', import.meta.url);
 await init({ module_or_path: await readFile(new URL('zega_wasm_bg.wasm', base)) });
 const source = await readFile(new URL('samples/movies.zql', base), 'utf8');

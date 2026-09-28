@@ -14,7 +14,7 @@ import { createStore, createViewport, createWire, defineComponent, defineSource,
 const DIR = path.resolve(fileURLToPath(new URL('.', import.meta.url)));
 const REPO = path.resolve(DIR, '..');
 
-// demos/canvas/lib/movies.ts imports the bare specifier 'rixse'. Give node a
+// demos/shared/movies.js imports the bare specifier 'rixse'. Give node a
 // workspace symlink when npm install has not made one (tooling only).
 if (!existsSync(path.join(REPO, 'node_modules/rixse'))) {
   mkdirSync(path.join(REPO, 'node_modules'), { recursive: true });
@@ -339,7 +339,7 @@ const wires = wireFile(cardLinkSpec, cardLinkEntities, [
 export async function build() {
   // The movies catalogue and vocabulary, from the demo's own definitions, with
   // the real schema text in the source description.
-  const movies = await import(path.join(REPO, 'demos/canvas/lib/movies.ts'));
+  const movies = await import(path.join(REPO, 'demos/shared/movies.js'));
   const zql = readFileSync(path.join(REPO, 'demos/canvas/public/zega/samples/movies.zql'), 'utf8');
   const schema = zql.slice(zql.indexOf('schema {'), zql.indexOf('display {')).trim() + '\n}';
   const moviesBriefText = movies.moviesBrief(schema); // also fixes the schema into the source description

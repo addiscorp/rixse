@@ -2,6 +2,7 @@
 // Chat is conversation. The agent's work lands on the canvas, not here.
 import { useRef, useState, type FormEvent } from 'react';
 import type { Store, Wire } from 'rixse';
+import { streamAgent, type AgentEvent } from 'rixse-demo-shared/agent';
 import type { Note } from './Logs';
 
 type Turn = { role: 'user' | 'assistant'; content: string; footnote?: string };
@@ -32,44 +33,27 @@ export function Chat<S>({ store, wire, brief, describe, note, hint, focus }: { s
     const context = format === 'wire' ? wireText : jsonText;
     note({ kind: 'agent', text: `→ ${opts.label}${MODEL_LABEL[model]}${opts.focusText ? ` · with ${opts.focusText}` : ''} · ${format} context ${fmt(context.length)} chars (${format === 'wire' ? `JSON would be ${fmt(jsonText.length)}` : `wire would be ${fmt(wireText.length)}`}) · ${describe(store.state)}` });
     const tContext = performance.now();
-    const res = await fetch('/api/agent', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ brief, message: opts.focusText ? `${message}\n(${opts.focusText})` : message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }),
-    });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     // Streamed: the reply and each action arrive as their own lines, and each
     // action is applied the moment it arrives.
     let say = '', tFirstAction = 0, tSay = 0, applyMs = 0;
-    let done: { model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } } | null = null;
+    const out: { done?: Extract<AgentEvent, { kind: 'done' }> } = {};
     const results: { ok: boolean; line: string }[] = [];
     if (!opts.reuseBubble) setTurns((t) => [...t, { role: 'assistant', content: '…' }]);
     const show = (content: string, footnote?: string) => setTurns((t) => [...t.slice(0, -1), { role: 'assistant', content, footnote }]);
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let pending = '';
-    for (;;) {
-      const { done: end, value } = await reader.read();
-      if (end) break;
-      pending += dec.decode(value, { stream: true });
-      let i;
-      while ((i = pending.indexOf('\n')) >= 0) {
-        const line = pending.slice(0, i); pending = pending.slice(i + 1);
-        if (!line.trim()) continue;
-        const ev = JSON.parse(line) as { kind: string; say?: string; action?: { type: string; payload?: unknown }; error?: string; model?: string; usage?: { input: number; output: number }; timing?: Timing & { firstToken: number | null } };
-        if (ev.kind === 'say' && ev.say) { say = ev.say; if (!tSay) tSay = performance.now(); show(say); }
-        else if (ev.kind === 'action' && ev.action) {
-          if (!tFirstAction) tFirstAction = performance.now();
-          const a0 = performance.now();
-          // The model refers to items by wire handle; translate back to real ids before dispatch.
-          const a = format === 'wire' ? wire.resolve(ev.action, store.params(ev.action.type)) : ev.action;
-          const r = store.dispatch(a, 'agent', { why: message });
-          applyMs += performance.now() - a0;
-          results.push({ ok: r.ok, line: r.ok ? '' : `${a.type} ${JSON.stringify(a.payload ?? {})}: ${(r as { error: string }).error}` });
-        } else if (ev.kind === 'error') throw new Error(ev.error);
-        else if (ev.kind === 'done') done = ev;
-      }
-    }
+    await streamAgent('/api/agent', { brief, message: opts.focusText ? `${message}\n(${opts.focusText})` : message, history, context, format, legend: wire.legend(), model, vocabulary: store.vocabulary(), rejections: rejections.current }, (ev) => {
+      if (ev.kind === 'say' && ev.say) { say = ev.say; if (!tSay) tSay = performance.now(); show(say); }
+      else if (ev.kind === 'action' && ev.action) {
+        if (!tFirstAction) tFirstAction = performance.now();
+        const a0 = performance.now();
+        // The model refers to items by wire handle; translate back to real ids before dispatch.
+        const a = format === 'wire' ? wire.resolve(ev.action, store.params(ev.action.type)) : ev.action;
+        const r = store.dispatch(a, 'agent', { why: message });
+        applyMs += performance.now() - a0;
+        results.push({ ok: r.ok, line: r.ok ? '' : `${a.type} ${JSON.stringify(a.payload ?? {})}: ${(r as { error: string }).error}` });
+      } else if (ev.kind === 'error') throw new Error(ev.error);
+      else if (ev.kind === 'done') out.done = ev;
+    });
+    const done = out.done;
     const tEnd = performance.now();
     const failed = results.filter((r) => !r.ok).map((r) => r.line);
     rejections.current = failed;
