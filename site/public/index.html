@@ -4,123 +4,35 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>rixse — agentic UI</title>
-<meta name="description" content="rixse is an open-source library for agentic UI: ui = view(state), and the agent writes state through the same typed actions you do.">
+<meta name="description" content="ui = agent(schema, view(state), prompt). A shared state gives people and agents one typed way to shape an interface.">
 <meta property="og:title" content="rixse — agentic UI">
-<meta property="og:description" content="ui = view(state). One state, two authors: you and the agent.">
+<meta property="og:description" content="One state. The user and agent act through the same typed vocabulary.">
 <meta property="og:url" content="https://rixse.dev">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2311161d'/%3E%3Ccircle cx='12' cy='16' r='4.5' fill='%23e8ecef'/%3E%3Ccircle cx='21' cy='16' r='4.5' fill='%23ff6a3d'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  :root {
-    --ground: #eef1f3;
-    --panel: #f8f9fa;
-    --ink: #11161d;
-    --soft: #56606b;
-    --faint: #c9d0d6;
-    --human: #11161d;
-    --agent: #e2531f;
-    --agent-tint: #fbe3d9;
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --ground: #0d1116;
-      --panel: #141a21;
-      --ink: #e8ecef;
-      --soft: #8d98a3;
-      --faint: #27313b;
-      --human: #e8ecef;
-      --agent: #ff7a4d;
-      --agent-tint: #3a2119;
-      color-scheme: dark;
-    }
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  body {
-    background: var(--ground);
-    color: var(--ink);
-    font: 400 17px/1.6 "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-    padding: max(16px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
-  }
-  main { max-width: 760px; margin: 0 auto; padding-block: clamp(40px, 9vw, 112px) 48px; display: grid; gap: 56px; }
-  main > *, section { min-width: 0; }
-  .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { display: grid; gap: 20px; }
-  .mark { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 22px; letter-spacing: -0.01em; }
-  .dots { display: inline-flex; gap: 4px; }
-  .dots i { width: 12px; height: 12px; border-radius: 50%; background: var(--human); display: block; }
-  .dots i + i { background: var(--agent); }
-  h1 { font-size: clamp(34px, 6vw, 54px); line-height: 1.08; letter-spacing: -0.025em; margin: 0; font-weight: 600; text-wrap: balance; }
-  .lede { color: var(--soft); max-width: 58ch; margin: 0; font-size: 19px; }
-  .formula { background: var(--panel); border: 1px solid var(--faint); border-radius: 12px; padding: 22px 24px; display: grid; gap: 6px; font-size: clamp(14px, 2.2vw, 17px); overflow-x: auto; }
-  .formula div { white-space: pre; }
-  .formula .c { color: var(--soft); }
-  .formula .a { color: var(--agent); }
-  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--soft); font-weight: 600; margin: 0 0 14px; }
-  .log { border-top: 1px solid var(--faint); overflow-x: auto; }
-  .row { display: grid; grid-template-columns: 76px 58px minmax(150px, max-content) 1fr; gap: 14px; padding: 10px 2px; border-bottom: 1px solid var(--faint); font-size: 14px; white-space: nowrap; align-items: baseline; min-width: 560px; }
-  .row .t { color: var(--soft); font-variant-numeric: tabular-nums; }
-  .who { font-weight: 500; }
-  .who.agent { color: var(--agent); }
-  .row .why { color: var(--soft); font-family: "Instrument Sans", system-ui, sans-serif; font-size: 13px; }
-  .row.agent-row { background: linear-gradient(90deg, var(--agent-tint), transparent 70%); }
-  .note { color: var(--soft); font-size: 15px; margin: 12px 0 0; max-width: 60ch; }
-  .pkgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 28px; margin: 0; padding: 0; list-style: none; }
-  .pkgs li { display: grid; gap: 2px; padding-block: 8px; border-bottom: 1px solid var(--faint); }
-  .pkgs b { font-weight: 500; font-size: 15px; }
-  .pkgs span { color: var(--soft); font-size: 14px; }
-  .pkgs .later b { color: var(--soft); }
-  footer { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; color: var(--soft); font-size: 15px; border-top: 1px solid var(--faint); padding-top: 20px; }
-  footer a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--faint); }
-  footer a:hover { border-color: var(--agent); }
-  .status { display: inline-flex; align-items: center; gap: 8px; }
-  .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--agent); }
+:root{--ground:#eef1f3;--panel:#f8f9fa;--ink:#11161d;--soft:#56606b;--faint:#c9d0d6;--human:#11161d;--agent:#e2531f;--agent-tint:#fbe3d9;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--ground:#0d1116;--panel:#141a21;--ink:#e8ecef;--soft:#8d98a3;--faint:#27313b;--human:#e8ecef;--agent:#ff7a4d;--agent-tint:#3a2119;color-scheme:dark}}
+*{box-sizing:border-box}html,body{margin:0;min-width:0}body{background:var(--ground);color:var(--ink);font:400 17px/1.6 "Instrument Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;padding:max(16px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}main{max-width:880px;margin:auto;padding-block:clamp(38px,8vw,100px) 48px;display:grid;gap:48px}main>*,section{min-width:0}.mono,code,pre{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}.mark{display:flex;align-items:center;gap:12px;font-weight:600;font-size:22px}.dots{display:inline-flex;gap:4px}.dots i{width:12px;height:12px;border-radius:50%;background:var(--human)}.dots i+i{background:var(--agent)}.topline{display:flex;align-items:center;justify-content:space-between;gap:20px}.topline a{color:var(--soft);text-decoration:none}.topline a:hover{color:var(--agent)}h1{font-size:clamp(36px,6vw,58px);line-height:1.06;letter-spacing:-.035em;margin:0;font-weight:600;text-wrap:balance}.lede{color:var(--soft);max-width:62ch;margin:0;font-size:clamp(18px,2.4vw,21px)}.hero{display:grid;gap:22px}.formula{background:var(--panel);border:1px solid var(--faint);border-radius:12px;padding:clamp(16px,3vw,24px);font-size:clamp(17px,3.6vw,28px);overflow-wrap:anywhere}.formula strong{color:var(--agent);font-weight:500}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--soft);font-weight:600}h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--soft);font-weight:600;margin:0 0 14px}.turn{display:grid;gap:12px}.phase{display:grid;grid-template-columns:140px minmax(0,1fr);gap:18px;background:var(--panel);border:1px solid var(--faint);border-radius:12px;padding:18px;transition:border-color .25s,transform .25s}.phase.active{border-color:var(--agent);transform:translateY(-2px)}.phase-label{color:var(--agent);font-size:13px;letter-spacing:.04em;font-weight:600}.phase p{margin:0 0 8px}.phase p:last-child{margin-bottom:0}.soft,.phase .soft{color:var(--soft);font-size:14px}.phase pre{margin:12px 0;padding:14px;background:var(--ground);border:1px solid var(--faint);border-radius:8px;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.token-count{display:inline-block;color:var(--agent);font-size:14px;font-weight:600}.mini-chart{position:relative;display:flex;align-items:flex-end;gap:14px;height:108px;margin:18px 0 8px;padding:12px 18px;border-bottom:1px solid var(--faint);background:linear-gradient(180deg,transparent 32%,var(--faint) 33%,transparent 34%,transparent 65%,var(--faint) 66%,transparent 67%)}.mini-chart span{position:relative;width:9px;height:35%;background:var(--agent);border-radius:5px}.mini-chart span:nth-child(2){height:62%}.mini-chart span:nth-child(3){height:43%}.mini-chart span:nth-child(4){height:80%}.mini-chart span:nth-child(5){height:58%}.line-chart{display:block;width:100%;height:auto;margin:16px 0 4px}.line-chart text{fill:var(--soft);font:12px "JetBrains Mono",monospace}.mini-chart i,.mini-chart em{align-self:flex-end;font:12px "JetBrains Mono",monospace;color:var(--soft);font-style:normal}.value-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0;padding:0;list-style:none}.value-list li,.packages li{min-width:0;background:var(--panel);border:1px solid var(--faint);border-radius:10px;padding:16px}.value-list strong,.packages b{display:block;margin-bottom:4px}.value-list span,.packages span{color:var(--soft);font-size:14px}.packages{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:0;padding:0;list-style:none}.packages li{display:grid;gap:2px}.packages a{color:inherit;text-decoration:none}.packages a:hover{color:var(--agent)}footer{display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;color:var(--soft);font-size:15px;border-top:1px solid var(--faint);padding-top:20px}footer a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--faint)}footer a:hover{border-color:var(--agent)}@media(max-width:620px){body{padding-inline:16px}main{gap:38px}.phase{grid-template-columns:1fr;gap:6px;padding:15px}.value-list{grid-template-columns:1fr}.phase pre{font-size:11px;padding:10px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
 </style>
 </head>
-<body>
-<main>
-  <header>
-    <div class="mark"><span class="dots" aria-hidden="true"><i></i><i></i></span>rixse</div>
-    <h1>Agentic UI. One state, two authors.</h1>
-    <p class="lede">rixse is a library for interfaces the agent can change for you. You and the agent edit the same state through the same typed actions, so every change is attributed, reversible and on the record.</p>
-  </header>
-
-  <div class="formula mono" role="img" aria-label="ui equals view of state; the next state equals agent of state and intent">
-    <div>ui&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= view(state)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c">// deterministic, like React</span></div>
-    <div>state' = <span class="a">agent</span>(state, intent)&nbsp;<span class="c">// the agent is the update function</span></div>
-  </div>
-
-  <section>
-    <h2>The action log</h2>
-    <div class="log mono">
-      <div class="row"><span class="t">12:04:01</span><span class="who">you</span><span>filter.set</span><span>region = "EU"</span></div>
-      <div class="row agent-row"><span class="t">12:04:03</span><span class="who agent">agent</span><span>chart.add</span><span>timeline <span class="why">— from "when did signups dip?"</span></span></div>
-      <div class="row agent-row"><span class="t">12:04:05</span><span class="who agent">agent</span><span>node.highlight</span><span>"step: checkout"</span></div>
-      <div class="row"><span class="t">12:04:12</span><span class="who">you</span><span>undo</span><span>chart.add</span></div>
-    </div>
-    <p class="note">Chat is where intent comes in. The canvas is <span class="mono">view(state)</span>. The agent never draws pixels: it proposes actions from a typed vocabulary, and the log shows what it touched.</p>
-  </section>
-
-  <section>
-    <h2>Packages</h2>
-    <ul class="pkgs mono">
-      <li><b>rixse</b><span>state, actions, the log, the agent loop</span></li>
-      <li><b>rixse-dom</b><span>plain HTML and CSS</span></li>
-      <li><b>rixse-react</b><span>React components</span></li>
-      <li class="later"><b>rixse-swift</b><span>SwiftUI · later</span></li>
-      <li class="later"><b>rixse-kotlin</b><span>Android · later</span></li>
-      <li class="later"><b>rixse-rust</b><span>primitives and tools · later</span></li>
-    </ul>
-  </section>
-
-  <footer>
-    <span class="status">Early development, open source</span>
-    <a href="https://github.com/rixsedev">github.com/rixsedev</a>
-    <a href="https://www.npmjs.com/package/rixse">npm</a>
-  </footer>
-</main>
-</body>
-</html>
+<body><main>
+<header class="hero"><div class="topline"><div class="mark"><span class="dots" aria-hidden="true"><i></i><i></i></span>rixse</div><a href="docs/">Documentation →</a></div><h1>Agentic UI. One state, two authors.</h1><p class="lede">The user and the agent shape the same interface through the same typed actions. The agent describes what to show; the app renders it.</p><div class="formula mono" aria-label="ui equals agent of schema, view of state, and prompt">ui = <strong>agent</strong>(schema, view(state), prompt)</div></header>
+<section><h2>One real turn, step by step</h2><div class="turn">
+<article class="phase"><div class="phase-label">01 · Prompt</div><div><p>“compare these over the years”</p><p class="soft">The user has selected two bars: <code>Avatar (movie)</code> and <code>Titanic (movie)</code>. The selection is part of the input, so “these” has a referent.</p></div></article>
+<article class="phase"><div class="phase-label">02 · Schema</div><div><p><strong>Components:</strong> <code>stat</code>, <code>bar</code>, <code>pie</code>, <code>line</code>, <code>table</code>, <code>graph</code>. Sizes: <code>viewport</code> → <code>large</code> → <code>medium</code> → <code>small</code>.</p><p><strong>Movies data:</strong> <code>title</code>, <code>year</code>, <code>gross</code>, and cast, directors and genres relationships. The source tells the agent how to query it.</p></div></article>
+<article class="phase"><div class="phase-label">03 · view(state)</div><div><p>The current screen is a top-10 box-office bar chart. The agent sees the typed view state and the selected items, not pixels or chart markup.</p><div class="mini-chart" aria-label="Illustration of the current top ten bar chart"><span style="height:76%"></span><span style="height:61%"></span><span style="height:48%"></span><span style="height:39%"></span><span style="height:28%"></span><i>top 10 by gross</i></div></div></article>
+<article class="phase"><div class="phase-label">04 · Agent</div><div><p>The agent outputs a typed action with a query and chart parameters:</p><pre><code>view.show({
+  id: 'gross-over-time', kind: 'line',
+  title: 'Box office over time',
+  query: '{ Movie(title = "Avatar" || title = "Titanic") limit 100000 { title year gross } }',
+  label: 'title', x: 'year', value: 'gross', size: 'large'
+})</code></pre><p class="token-count">About 92 output tokens for a full chart turn in the iOS log.</p><p class="soft">That is a small observed demo response; exact usage varies by model and prompt.</p></div></article>
+<article class="phase"><div class="phase-label">05 · State → UI</div><div><p>The action updates state. The source returns rows to the app, and <code>view(state)</code> renders the line chart. The same state and layout rules render deterministically on web and iPhone.</p><svg class="line-chart" role="img" aria-label="Illustrative yearly box office line chart for Avatar and Titanic" viewBox="0 0 560 128" preserveAspectRatio="none"><path d="M18 20H542 M18 62H542 M18 104H542" stroke="var(--faint)"/><polyline points="24,90 110,72 196,78 282,42 368,50 454,27 536,38" fill="none" stroke="var(--agent)" stroke-width="3"/><polyline points="24,102 110,82 196,88 282,94 368,57 454,76 536,64" fill="none" stroke="var(--soft)" stroke-width="3" stroke-dasharray="7 5"/><text x="24" y="124">Avatar</text><text x="100" y="124">Titanic (dashed)</text></svg></div></article>
+</div></section>
+<section><h2>Why it matters</h2><ul class="value-list"><li><strong>Typed and attributable</strong><span>The agent can only use allowed actions. The log records who changed what.</span></li><li><strong>Tiny outputs</strong><span>A few action fields specify a chart, keeping responses fast and inexpensive.</span></li><li><strong>One state on every platform</strong><span>Web and native Swift use the same state model and shared conformance vectors.</span></li><li><strong>One shared interface</strong><span>The user and agent both act on the same state through the same vocabulary.</span></li></ul></section>
+<section><h2>Packages on main</h2><ul class="packages"><li><b>rixse</b><span>JavaScript core, actions, state, components and wire format.</span></li><li><b>rixse-react</b><span>React bindings.</span></li><li><b>rixse-swift</b><span>Swift core and conformance checker.</span></li></ul></section>
+<footer><span>Open source · Apache-2.0</span><a href="docs/">Docs</a><a href="https://github.com/rixsedev/rixse">GitHub</a><a href="https://www.npmjs.com/package/rixse">npm</a></footer>
+</main><script>if('IntersectionObserver'in window&&!matchMedia('(prefers-reduced-motion: reduce)').matches){const phases=[...document.querySelectorAll('.phase')];const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){phases.forEach(p=>p.classList.remove('active'));entry.target.classList.add('active')}}),{threshold:.55});phases.forEach(p=>observer.observe(p))}</script></body></html>

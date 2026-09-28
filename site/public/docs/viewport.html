@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Viewport API · rixse docs</title><meta name="description" content="The viewport turns component definitions into state, a catalogue for the agent and a set of typed actions."><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="docs.css"></head><body><div class="shell"><aside><a class="brand" href="../index.html"><span class="dots" aria-hidden="true"><i></i><i></i></span>rixse docs</a><nav aria-label="Documentation"><a href="index.html">Overview</a><a href="components.html">Components</a><a href="sources.html">Sources</a><a href="viewport.html" aria-current="page">Viewport API</a><a href="selection-voice.html">Selection & voice</a><a href="platforms.html">Platforms</a></nav><p class="aside-note">Documentation describes merged main. APS proposals are labeled as drafts.</p></aside><div class="mobile-nav"><details><summary>rixse docs · navigate</summary><nav aria-label="Documentation"><a href="index.html">Overview</a><a href="components.html">Components</a><a href="sources.html">Sources</a><a href="viewport.html" aria-current="page">Viewport API</a><a href="selection-voice.html">Selection & voice</a><a href="platforms.html">Platforms</a></nav></details></div><main><div class="eyebrow">Documentation · main</div><h1>Viewport API</h1><p class="lede">The viewport turns component definitions into state, a catalogue for the agent and a set of typed actions.</p><h2>Create a viewport</h2><pre><code>createViewport({ components: ComponentSpec[], sources: Record&lt;string, SourceDef&gt; })
+// returns { initial, actions, catalogue, rowsFor, components }</code></pre><p><code>initial()</code> returns <code>{ items: {}, order: [], selection: null }</code>. <code>catalogue()</code> describes components and sources. <code>rowsFor(item)</code> runs the item’s query via its source. <code>components</code> is a map by kind.</p>
+<h2>Actions</h2><p>Each action is dispatched through the store as <code>store.dispatch({ type, payload }, author)</code>. The author is <code>'you'</code> or <code>'agent'</code>.</p>
+<table><thead><tr><th>Action</th><th>Payload shape</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>view.show</code></td><td><code>{ id, kind, title, query?, size?, ...componentParams, at?, target? }</code></td><td>Adds or updates a component. Optional placement: <code>at</code> end/before/after/replace and target id. A replacement removes the target.</td></tr>
+<tr><td><code>view.move</code></td><td><code>{ id, at: 'end'|'before'|'after', target? }</code></td><td>Moves an existing component in order.</td></tr>
+<tr><td><code>view.resize</code></td><td><code>{ id, size }</code></td><td>Changes to a size supported by that kind.</td></tr>
+<tr><td><code>view.remove</code></td><td><code>{ id }</code></td><td>Removes a component and its selection.</td></tr>
+<tr><td><code>view.clear</code></td><td><code>{}</code></td><td>Resets viewport state.</td></tr>
+<tr><td><code>select.set</code></td><td><code>{ view, items }</code></td><td>Sets selected values; <code>items</code> is a pipe-separated string.</td></tr>
+<tr><td><code>select.clear</code></td><td><code>{}</code></td><td>Clears the current selection.</td></tr></tbody></table>
+<h2>Runnable action example</h2><p>From the repository root with the <code>rixse</code> workspace installed, this snippet exercises every viewport and selection action against the main implementation:</p><pre><code>import { createStore, createViewport, defineComponent, defineSource } from 'rixse';
+
+const line = defineComponent('line', {
+  describe: 'Yearly values', sizes: ['large', 'viewport'],
+  source: 'movies',
+  params: {
+    label: { type: 'string', optional: true },
+    x: { type: 'string' }, value: { type: 'string' }
+  }
+});
+const movies = defineSource({
+  describe: 'A local Movies source', query: 'ZQL',
+  run: () => [{ title: 'Avatar', year: 2009, gross: 1 }]
+});
+const viewport = createViewport({ components: [line], sources: { movies } });
+const store = createStore({ initial: viewport.initial(), actions: viewport.actions });
+const dispatch = (type, payload) => store.dispatch({ type, payload }, 'you');
+
+dispatch('view.show', { id: 'years', kind: 'line', title: 'By year',
+  query: '{ Movie limit 100000 { title year gross } }',
+  label: 'title', x: 'year', value: 'gross', size: 'large' });
+dispatch('view.move', { id: 'years', at: 'end' });
+dispatch('view.resize', { id: 'years', size: 'viewport' });
+dispatch('select.set', { view: 'years', items: 'Avatar|Titanic' });
+dispatch('select.clear', {});
+dispatch('view.remove', { id: 'years' });
+dispatch('view.clear', {});</code></pre>
+<p>These payloads follow the action definitions generated by <code>createViewport</code> in main. Each action is validated and either applied atomically or rejected with a readable reason.</p><footer><a href="../index.html">rixse home</a> · Source: <a href="https://github.com/rixsedev/rixse">rixsedev/rixse</a></footer></main></div></body></html>
