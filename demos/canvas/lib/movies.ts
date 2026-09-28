@@ -253,7 +253,7 @@ export const movieComponents = [
   }),
 ];
 
-export const moviesViewport = createViewport<View & { [k: string]: unknown }>({ components: movieComponents, sources: { zega: zegaSource } });
+export const moviesViewport = createViewport({ components: movieComponents, sources: { zega: zegaSource } });
 export const movieActions = moviesViewport.actions;
 
 /** Run a component's query (the page draws with this; rejections read the same). */
@@ -293,6 +293,7 @@ export function createMoviesWire() {
 }
 
 export function createMoviesStore() {
-  return createStore<MoviesState>({ initial: moviesViewport.initial() as MoviesState, actions: movieActions as never });
+  // Items carry each kind's own params, so the page reads them through View.
+  return createStore({ initial: moviesViewport.initial() as unknown as MoviesState, actions: movieActions });
 }
 export type MoviesStore = ReturnType<typeof createMoviesStore>;
