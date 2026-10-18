@@ -141,10 +141,11 @@ h1 span.lit{color:var(--agent)}
 .line-values{display:flex;gap:18px;flex-wrap:wrap;font-size:11px}
 .line-values b{font-weight:500}
 .closing{font-size:15px;margin:38px 0 22px;color:var(--soft)}
-footer{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;border-top:1px solid var(--faint);padding-top:20px;font-size:12px;color:var(--soft)}
-footer p{margin:0}
+footer{display:flex;justify-content:space-between;align-items:center;gap:12px 18px;flex-wrap:wrap;border-top:1px solid var(--faint);padding-top:20px;font-size:12px;color:var(--soft)}
 footer a{text-decoration:none}
-footer .links{display:flex;gap:20px}
+footer .credit{display:inline-flex;align-items:center;gap:8px}
+footer .credit img{width:32px;height:32px;border-radius:50%;display:block;flex:none}
+footer .links{display:flex;gap:16px;flex-wrap:wrap}
 [hidden]{display:none!important}
 .js-only{display:none}
 .js .js-only{display:flex}
@@ -236,5 +237,5 @@ v1 bar &quot;Top 10 · worldwide box office&quot; large &quot;{ Movie order by g
   value: "gross", size: "large"
 })</pre><p>About 92 output tokens for a compact chart action; an approximate, model-dependent size, not a measured call on this page.</p><p>The wire response is JSON: <code>{"view.show": {…}}</code>, alongside a short <code>say</code> reply. It specifies a component and a query—not pixels or executable UI code. The app resolves <code>v1</code> to the existing chart.</p></aside>
 </section>
-<p class="closing">People and agents shape the same interface through the same typed actions.</p><footer><p>Packages: <a href="https://github.com/rixsedev/rixse/tree/main/packages/rixse">rixse</a> · <a href="https://github.com/rixsedev/rixse/tree/main/packages/rixse-react">rixse-react</a> · <a href="https://github.com/rixsedev/rixse/tree/main/packages/rixse-swift">rixse-swift</a></p><div class="links"><a href="docs/">Documentation</a><a href="https://github.com/rixsedev/rixse">GitHub ↗</a><span>Apache-2.0</span></div></footer>
+<p class="closing">People and agents shape the same interface through the same typed actions.</p><footer><span class="credit"><img src="/addis-circle.svg" alt="" width="32" height="32">© 2026 <a href="https://addis.gg">Addis Corp</a></span><nav class="links" aria-label="Footer"><a href="/docs/">docs</a><a href="https://github.com/sponsors/samifouad">tip jar</a><a href="https://github.com/rixsedev/rixse">github</a></nav></footer>
 </main><script src="explainer.js"></script></body></html>
