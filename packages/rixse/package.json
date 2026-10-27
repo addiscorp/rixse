@@ -2,8 +2,12 @@
   "name": "rixse",
   "version": "0.1.0",
   "description": "The gateway between an agent's VM, a vault and the internet: import { gateway } from 'rixse'.",
-  "homepage": "https://rixse.dev",
-  "repository": "https://rixse.dev",
+  "homepage": "https://github.com/addiscorp/rixse#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/addiscorp/rixse.git",
+    "directory": "packages/rixse"
+  },
   "license": "Apache-2.0",
   "keywords": [
     "agents",
