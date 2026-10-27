@@ -21,7 +21,7 @@ The Swift core is a SwiftPM dependency from the repository root (iOS 17, macOS 1
 ```swift
 // Package.swift
 dependencies: [
-  .package(url: "https://github.com/rixsedev/rixse.git", branch: "main"),
+  .package(url: "https://github.com/addiscorp/rixse.git", branch: "main"),
 ],
 targets: [
   .target(

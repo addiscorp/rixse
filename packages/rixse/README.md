@@ -18,7 +18,7 @@ React bindings live in [`rixse-react`](https://www.npmjs.com/package/rixse-react
 ## Core: one store, two authors
 
 ```js
-import { createStore, defineAction, Rejected } from 'rixse';
+import { createStore, defineAction, Rejected } from 'rixse/ui';
 
 const actions = [
   defineAction('movie.rate', {
@@ -55,7 +55,7 @@ selection a kind of component supports. `layout(state, width, bands)` maps the
 viewport's ordered items to grid cells, deterministically.
 
 ```js
-import { defineComponent, defineSource, createViewport, createStore, layout } from 'rixse';
+import { defineComponent, defineSource, createViewport, createStore, layout } from 'rixse/ui';
 
 const line = defineComponent('line', {
   describe: 'Yearly values',

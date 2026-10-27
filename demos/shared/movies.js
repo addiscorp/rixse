@@ -5,12 +5,12 @@
 //
 // Framework-free (plain ESM, no React): the canvas demo and the plain demo
 // both import this module. demos/canvas/lib/movies.ts is a re-export shim.
-import { createStore, createViewport, createWire, defineComponent, defineSource, Rejected } from 'rixse';
+import { createStore, createViewport, createWire, defineComponent, defineSource, Rejected } from 'rixse/ui';
 import { getZega } from './zega.js';
 
 export const VIEW_KINDS = /** @type {const} */ (['stat', 'bar', 'line', 'pie', 'table', 'graph']);
 /** @typedef {(typeof VIEW_KINDS)[number]} ViewKind */
-export { place } from 'rixse';
+export { place } from 'rixse/ui';
 export const FLAGS = /** @type {const} */ (['none', 'drops', 'rises', 'both']);
 /**
  * @typedef {{ id: string, kind: ViewKind, title: string, query: string, label: string, value: string, sort: string, limit: number, size: import('rixse').Size, x: string, flag: (typeof FLAGS)[number], threshold: number, notes: string }} View

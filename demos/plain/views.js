@@ -3,7 +3,7 @@
 // page) and draws the rows. layout() decides the grid; the agent never
 // positions anything. The chart math (series, lineData, statOf, capped) is the
 // shared module the canvas demo also uses.
-import { layout } from 'rixse';
+import { layout } from 'rixse/ui';
 import { getZega } from 'rixse-demo-shared/zega';
 import { capped, lineData, series, statOf } from 'rixse-demo-shared/movies';
 

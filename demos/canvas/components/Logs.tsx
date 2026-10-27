@@ -3,7 +3,7 @@
 // agent's round trips. Undo walks back the latest action, whoever made it.
 import { useEffect, useRef } from 'react';
 import { useRixseEvents } from 'rixse-react';
-import type { Store } from 'rixse';
+import type { Store } from 'rixse/ui';
 
 export type Note = { at: number; order: number; kind: 'agent' | 'error'; text: string };
 

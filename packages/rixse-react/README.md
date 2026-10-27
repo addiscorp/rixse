@@ -26,7 +26,7 @@ Peer dependencies: `react >= 19` and `rixse`.
 ## Example
 
 ```jsx
-import { createStore, defineAction } from 'rixse';
+import { createStore, defineAction } from 'rixse/ui';
 import { useRixseState, useRixseEvents } from 'rixse-react';
 
 const store = createStore({

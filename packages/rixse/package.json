@@ -22,6 +22,10 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./src/index.js"
+    },
+    "./ui": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
     }
   },
   "scripts": {

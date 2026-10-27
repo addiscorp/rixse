@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force';
 import { useRixseState } from 'rixse-react';
-import { layout } from 'rixse';
+import { layout } from 'rixse/ui';
 import { loadZega, getZega } from '@/lib/zega';
 import { Component, type ReactNode } from 'react';
 import { capped, lineData, series, statOf, type MoviesStore, type View } from '@/lib/movies';

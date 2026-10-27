@@ -1,5 +1,5 @@
 // The canvas's vocabulary: the only things the human or the agent can do to it.
-import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
+import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse/ui';
 
 export type Tone = 'plain' | 'accent' | 'good' | 'warn';
 export type Card = { id: string; title: string; body: string; x: number; y: number; tone: Tone };

@@ -56,7 +56,7 @@ for (const [name, dir] of PACKAGES) {
 // packages as ESM and render one rixse-react component via react-dom/server.
 const CHECK_SOURCE = `
 import assert from 'node:assert/strict';
-import * as rixse from 'rixse';
+import * as rixse from 'rixse/ui';
 import * as bindings from 'rixse-react';
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
