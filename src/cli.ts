@@ -15,14 +15,14 @@
 // reach the config directory; an agent on the host itself can approve its
 // own request until decisions are signed.
 import { userInfo } from 'node:os'
+import { describe } from './describe'
 import * as inbox from './inbox'
-import { PLACEHOLDER } from './secrets'
 
 const USAGE = {
   usage: [
     'rixse requests --config-dir <dir> [--human]',
     'rixse show <id> --config-dir <dir> [--human]',
-    'rixse decide <id> yes|no --config-dir <dir> [--hash <hash>] [--by <name>] [--human]',
+    'rixse decide <id> yes|no --config-dir <dir> [--hash <hash>] [--by <name>] [--harar-socket <path>] [--human]',
   ],
 }
 
@@ -31,7 +31,7 @@ function fail(error: string, code = 2): never {
   process.exit(code)
 }
 
-const VALUED = new Set(['--config-dir', '--by', '--hash'])
+const VALUED = new Set(['--config-dir', '--by', '--hash', '--harar-socket'])
 
 export function parse(argv: string[]) {
   const flags: Record<string, string | true> = {}
@@ -47,43 +47,6 @@ export function parse(argv: string[]) {
     else rest.push(a)
   }
   return { flags, rest }
-}
-
-/** A held request as a person reads it: every header, each placeholder
- *  named by its secret and the key a yes sends in its place, and the body. */
-export function describe(r: inbox.Held & { status?: string }): string {
-  // Each placeholder in a header, in order, by the secret the hold recorded
-  // for that header; Basic credentials stay encoded, and are listed below.
-  const named = (header: string, text: string) => {
-    const secrets = r.keys.filter((k) => k.header === header)
-    let n = 0
-    return text.replace(PLACEHOLDER, () => {
-      const k = secrets[Math.min(n++, secrets.length - 1)]
-      return k ? `‹harar://${k.approved ?? k.secret}›` : '‹placeholder›'
-    })
-  }
-  const lines = [
-    `${r.id}  ${r.status ?? ''}  held ${r.at}  agent ${r.agent}`,
-    `rule: ${r.rule ?? 'none matched'}`,
-    '',
-    `${r.method} https://${r.host}${r.target}`,
-  ]
-  for (let i = 0; i + 1 < r.headers.length; i += 2)
-    lines.push(`${r.headers[i]}: ${named(r.headers[i], r.headers[i + 1])}`)
-  lines.push('')
-  if (r.keys.length) {
-    lines.push('keys swapped in on a yes:')
-    for (const k of r.keys)
-      lines.push(
-        `  ${k.header}: harar://${k.approved ?? k.secret}${k.approved ? ` (in place of the agent's harar://${k.secret})` : ''}`,
-      )
-  } else lines.push('keys swapped in on a yes: none')
-  const body = Buffer.from(r.body, 'base64')
-  const text = body.toString('utf8')
-  const printable = !/[\u0000-\u0008\u000e-\u001f�]/.test(text)
-  lines.push('', `body (${body.length} bytes${printable ? '' : ', base64'}):`)
-  lines.push(printable ? text : r.body, '', `hash: ${r.hash}`)
-  return lines.join('\n') + '\n'
 }
 
 export function main(
@@ -142,6 +105,22 @@ export function main(
       if (prompt('Send exactly this? Type yes:')?.trim() !== 'yes')
         fail('not approved', 1)
       shown = r.hash
+    }
+    // A request the gateway put to an approver is approved on the person's
+    // device, where harar asks for Touch ID; the answer below is only the
+    // gateway's cue to check with it.
+    const held = inbox.held(configDir, id)
+    if (decision === 'yes' && held?.approval && held.hash === shown) {
+      const socket =
+        typeof flags['harar-socket'] === 'string'
+          ? ['--socket', flags['harar-socket']]
+          : []
+      const signed = Bun.spawnSync(
+        ['harar', 'approve', held.approval, ...socket],
+        { stdio: ['inherit', 'inherit', 'inherit'] },
+      )
+      if (signed.exitCode !== 0)
+        fail(`harar approve ${held.approval} didn't approve it`, 1)
     }
     let a: inbox.Answer
     try {

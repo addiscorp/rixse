@@ -6,6 +6,8 @@ import type { Held } from './inbox'
 
 export type GatewayEvent =
   | { event: 'held'; request: Held }
+  /** The approver was asked: approve on a device (`harar approve <approval>`). */
+  | { event: 'asked'; request: string; approval: string }
   | {
       event: 'decided'
       request: string

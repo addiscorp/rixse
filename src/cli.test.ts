@@ -113,3 +113,79 @@ test('usage errors are JSON, with exit 2', async () => {
   const none = await rixse('requests')
   expect(JSON.parse(none.err).error).toBe('--config-dir is required')
 })
+
+test('a request put to an approver is approved through harar, and harar saying no stops it', async () => {
+  // A stand-in harar on PATH: records its arguments, approves or not.
+  const bin = join(base, 'bin')
+  await mkdir(bin, { recursive: true })
+  const log = join(base, 'harar.log')
+  const harar = join(bin, 'harar')
+  const fake = (code: number) =>
+    Bun.write(harar, `#!/bin/sh\necho "$@" >> ${log}\nexit ${code}\n`).then(
+      () => Bun.spawnSync(['chmod', '+x', harar]),
+    )
+  const run = (...args: string[]) => {
+    const p = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    })
+    return Promise.all([new Response(p.stderr).text(), p.exited])
+  }
+  const held = () => {
+    const r = inbox.hold(base, {
+      agent: 'gg.addis.agent.ops',
+      host: 'api.cloudflare.com',
+      method: 'POST',
+      target: '/x',
+      headers: [],
+      keys: [],
+      body: '',
+    })
+    inbox.setApproval(base, r.id, `appr-${r.id}`)
+    return r
+  }
+
+  await fake(1)
+  const refused = held()
+  const [err, code] = await run(
+    'decide',
+    refused.id,
+    'yes',
+    '--hash',
+    refused.hash,
+    '--config-dir',
+    base,
+    '--harar-socket',
+    '/p.sock',
+  )
+  expect(code).toBe(1)
+  expect(JSON.parse(err).error).toBe(
+    `harar approve appr-${refused.id} didn't approve it`,
+  )
+  expect(inbox.answer(base, refused.id)).toBeUndefined()
+
+  await fake(0)
+  const approved = held()
+  const [, ok] = await run(
+    'decide',
+    approved.id,
+    'yes',
+    '--hash',
+    approved.hash,
+    '--config-dir',
+    base,
+    '--harar-socket',
+    '/p.sock',
+  )
+  expect(ok).toBe(0)
+  expect(inbox.answer(base, approved.id)?.decision).toBe('yes')
+  expect((await Bun.file(log).text()).trim().split('\n')).toEqual([
+    `approve appr-${refused.id} --socket /p.sock`,
+    `approve appr-${approved.id} --socket /p.sock`,
+  ])
+  const show = await rixse('show', approved.id, '--config-dir', base, '--human')
+  expect(show.out).toContain(
+    `approval: appr-${approved.id} (on your device: harar approve appr-${approved.id})`,
+  )
+})

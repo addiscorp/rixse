@@ -11,12 +11,14 @@ import { readFile } from 'node:fs/promises'
 import type { Server } from 'node:net'
 import { join } from 'node:path'
 import { stationAuthority } from './ca'
+import type { Approver } from './approver'
 import type { GatewayConfig } from './config'
 import { auditor, lookupAll, startEgress, type Route } from './egress'
 import { keyedDefaults, ruleProblem } from './decide'
 import { asker, grants, secretGrants } from './escalations'
 import { Events, type GatewayEvent } from './events'
 import { allowed, domainProblem } from './hosts'
+import { describe } from './describe'
 import * as inbox from './inbox'
 import { startIntercept, type Intercept, type Upstream } from './intercept'
 import { Placeholders, referencesIn, type Secrets } from './secrets'
@@ -71,6 +73,10 @@ export async function gateway(o: {
   /** The profile's `gateway` section: rules, and the key each host's
    *  approved sends use. */
   config?: GatewayConfig
+  /** Who may say yes: with one, a yes counts only when a person approved the
+   *  exact request on one of their devices (`import { approver } from
+   *  'harar'`). Without one, an answer file is a yes (VM agents only). */
+  approver?: Approver
   /** Tests point the hosts the gateway opens at a local stand-in. */
   upstream?: (host: string) => Promise<Upstream>
 }): Promise<GatewaySession> {
@@ -193,15 +199,18 @@ export async function gateway(o: {
       value,
       rules,
       defaults,
-      hold: (r) =>
-        inbox.hold(o.configDir, {
+      hold: (r) => {
+        const held = inbox.hold(o.configDir, {
           ...r,
           agent: o.agent,
           keys: r.keys.map((k) => {
             const approved = approvedFor(r.host, k.secret)
             return approved ? { ...k, approved } : k
           }),
-        }),
+        })
+        if (o.approver) void ask(held)
+        return held
+      },
       // The intercept audits each request itself; events go to the runtime.
       emit: (e) => events.emit(e),
       authority,
@@ -223,17 +232,73 @@ export async function gateway(o: {
   // Answers: a yes for one of this session's requests is sent once, by
   // whichever session claims it first. The answers directory is watched, so
   // `rixse decide` in the person's terminal is seen at once; nothing polls.
+  // With an approver, each held request is put to it, and only its word
+  // counts for a yes: an answer file is just the cue to check. Which
+  // approval belongs to which request is known only here, in memory, from
+  // this session's own asks: a record on disk (its bytes, its hash, its
+  // approval id) can be written by anything on the host, so it never names
+  // the approval that sends it. A restarted session sends none of the
+  // requests an earlier one held.
+  const askedFor = new Map<string, { approval: string; hash: string }>()
+  const ask = async (held: inbox.Held) => {
+    try {
+      const approval = await o.approver!.ask({
+        class: 'gateway.send',
+        agent: o.agent,
+        subject: held.hash,
+        text: describe(held),
+      })
+      askedFor.set(held.id, { approval, hash: held.hash })
+      // For display (`rixse show`) only.
+      inbox.setApproval(o.configDir, held.id, approval)
+      emit({ event: 'asked', request: held.id, approval })
+    } catch (e) {
+      audit({
+        kind: 'gateway',
+        event: 'ask failed',
+        request: held.id,
+        result: (e as Error).message,
+      })
+    }
+  }
+  const declined = (id: string, by: string) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    emit({ event: 'decided', request: id, decision: 'no', by })
+  }
+  /** Who said yes to `r`, if anyone may: the approver's verified word when
+   *  there is one, else the answer file. */
+  const approvedBy = async (r: inbox.Held): Promise<string | undefined> => {
+    if (!o.approver) return inbox.sendable(o.configDir, r)?.by
+    const mine = askedFor.get(r.id)
+    if (!mine || mine.hash !== r.hash) return undefined
+    const s = await o.approver.check(mine.approval)
+    if (s.state === 'waiting') return undefined
+    if (s.subject !== r.hash) {
+      audit({
+        kind: 'gateway',
+        event: 'approval for other bytes',
+        request: r.id,
+        approval: mine.approval,
+      })
+      return undefined
+    }
+    if (s.state === 'denied') return void declined(r.id, s.by)
+    // In time, and the approval's one use.
+    if (Date.now() - Date.parse(r.at) > inbox.HOLD_MS + inbox.APPROVAL_MS)
+      return undefined
+    if (!inbox.claimApproval(o.configDir, mine.approval)) return undefined
+    return `${s.by} (device ${s.device})`
+  }
   const sendIfApproved = async (id: string) => {
     const r = inbox.held(o.configDir, id)
     if (!r || r.agent !== o.agent || !intercept) return
     const a = inbox.answer(o.configDir, id)
-    if (a?.decision === 'no' && !seen.has(id)) {
-      seen.add(id)
-      return emit({ event: 'decided', request: id, decision: 'no', by: a.by })
-    }
-    const yes = inbox.sendable(o.configDir, r)
-    if (!yes || !inbox.claim(o.configDir, id)) return
-    emit({ event: 'decided', request: id, decision: 'yes', by: yes.by })
+    if (a?.decision === 'no') return declined(id, a.by)
+    if (inbox.status(o.configDir, r) === 'sent') return
+    const by = await approvedBy(r)
+    if (!by || !inbox.claim(o.configDir, id)) return
+    emit({ event: 'decided', request: id, decision: 'yes', by })
     const result = await intercept.send(r, approvedValue)
     const status = result.ok ? result.status : result.reason
     inbox.markSent(o.configDir, { id, at: new Date().toISOString(), status })
