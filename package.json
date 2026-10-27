@@ -19,6 +19,7 @@
   "files": [
     "src",
     "!src/**/*.test.ts",
+    "!src/raw-tls-client.ts",
     "!src/tsconfig.json",
     "README.md",
     "LICENSE"
