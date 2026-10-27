@@ -1,6 +1,13 @@
 import { expect, test } from 'bun:test'
 import type { Effect, Rule } from './config'
-import { decide, governs, pathProblem, ruleProblem } from './decide'
+import {
+  decide,
+  governs,
+  decideWith,
+  keyedDefaults,
+  pathProblem,
+  ruleProblem,
+} from './decide'
 
 const CF = 'api.cloudflare.com'
 const PCT =
@@ -150,4 +157,51 @@ test.each<[Rule, string]>([
 
 test('ordinary rules have no problem', () => {
   for (const r of rules) expect(ruleProblem(r)).toBeNull()
+})
+
+test('a host a key goes to, governed by no rule: reads apply, everything else is held', () => {
+  const defaults = keyedDefaults(['api.stripe.com', CF, '*.github.test'])
+  const on = (host: string, method: string) =>
+    decideWith(rules, defaults, { host, method, path: '/v1/charges' }).effect
+  expect(on('api.stripe.com', 'GET')).toBe('apply')
+  expect(on('api.stripe.com', 'HEAD')).toBe('apply')
+  expect(on('api.stripe.com', 'POST')).toBe('request')
+  expect(on('api.stripe.com', 'DELETE')).toBe('request')
+  // CF has rules of its own: the defaults never apply to it.
+  expect(
+    decideWith(rules, defaults, { host: CF, method: 'GET', path: '/x' }).effect,
+  ).toBe('request')
+})
+
+test('a host the profile governs by any pattern never gets the defaults', () => {
+  // Named only by a wildcard: GET stays held.
+  const wild: Rule[] = [
+    { host: '*.stripe.com', method: 'GET', effect: 'request' },
+  ]
+  expect(
+    decideWith(wild, keyedDefaults(['api.stripe.com']), {
+      host: 'api.stripe.com',
+      method: 'GET',
+      path: '/',
+    }).effect,
+  ).toBe('request')
+  // The vault names a wildcard, the profile an exact host with `*`: held.
+  const all: Rule[] = [
+    { host: 'api.stripe.com', path: '/*', effect: 'request' },
+  ]
+  expect(
+    decideWith(all, keyedDefaults(['*.stripe.com']), {
+      host: 'api.stripe.com',
+      method: 'GET',
+      path: '/v1',
+    }).effect,
+  ).toBe('request')
+  // ...while a sibling the profile doesn't name gets the defaults.
+  expect(
+    decideWith(all, keyedDefaults(['*.stripe.com']), {
+      host: 'files.stripe.com',
+      method: 'GET',
+      path: '/',
+    }).effect,
+  ).toBe('apply')
 })
