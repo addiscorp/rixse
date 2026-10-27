@@ -18,7 +18,9 @@ const AGENT = 'gg.addis.agent.dns-fixer'
 const CF = 'api.cloudflare.com'
 const READ = 'personal/cloudflare/DNS_READ'
 const EDIT = 'personal/cloudflare/DNS_EDIT'
+const STRIPE = 'prod/shop/STRIPE_KEY'
 const REAL: Record<string, string> = {
+  [STRIPE]: 'sk_live_real',
   [READ]: 'cf_READ_real',
   [EDIT]: 'cf_EDIT_real',
 }
@@ -47,12 +49,13 @@ beforeAll(async () => {
   await mkdir(project)
   await writeFile(
     join(project, '.env'),
-    `CLOUDFLARE_API_TOKEN=harar://${READ}\n`,
+    `CLOUDFLARE_API_TOKEN=harar://${READ}\nSTRIPE_KEY=harar://${STRIPE}\n`,
   )
   allowSecret(base, AGENT, READ)
   allowSecret(base, AGENT, EDIT)
+  allowSecret(base, AGENT, STRIPE)
   const world = await stationAuthority(join(base, 'world'))
-  const leaf = await world.leaf([CF, 'status.example.com'])
+  const leaf = await world.leaf([CF, 'api.stripe.com', 'status.example.com'])
   upstream = httpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
@@ -79,7 +82,7 @@ beforeAll(async () => {
   session = await gateway({
     project,
     vault: {
-      hosts: async () => [CF],
+      hosts: async (secret) => [secret === STRIPE ? 'api.stripe.com' : CF],
       send: async (secret) => (sends.push(secret), REAL[secret]),
     },
     configDir: base,
@@ -383,4 +386,23 @@ test('an answer is cut only after the key is taken out of it', async () => {
   expect(sent.body.length).toBeLessThanOrEqual(65536)
   expect(sent.body).not.toContain('cf_E')
   expect(sent.body.endsWith('Bearer mirab')).toBe(true)
+})
+
+test('a host a key goes to, with no rule: a read passes with the key, a write is held', async () => {
+  const stripe = ['-H', `Authorization: Bearer ${session.env.STRIPE_KEY}`]
+  const before = received.length
+  const read = await curl([...stripe, 'https://api.stripe.com/v1/charges'])
+  expect(read.status).toBe(200)
+  expect(received.at(-1)!.auth).toBe('Bearer sk_live_real')
+  const write = await curl([
+    ...stripe,
+    '-X',
+    'POST',
+    '-d',
+    'amount=1',
+    'https://api.stripe.com/v1/charges',
+  ])
+  expect(write.status).toBe(403)
+  expect(JSON.parse(write.body).rixse.status).toBe('held')
+  expect(received.length).toBe(before + 1)
 })

@@ -3,9 +3,10 @@
 //
 // A host named by any rule is governed: each request to it gets the effect
 // of the rules that match it, and one no rule matches is held (`request`).
-// A host no rule names is NOT governed, even one a key is swapped in for:
-// the allow-list and the vault decide, and its requests pass unheld. Name a
-// host in a rule to hold its writes.
+// A host a key is swapped in for is governed too: with no rule naming it,
+// it gets `keyedDefaults` (reads apply, everything else is held), the safe
+// default of a gateway like DigitalOcean's: no rule, no unapproved write.
+// A host with neither passes as the allow-list lets it (no key, no power).
 import { allowed, domainProblem } from './hosts'
 import type { Effect, Rule } from './config'
 
@@ -91,6 +92,21 @@ export function pathProblem(path: string): string | null {
     return 'a . or .. segment in the path'
   if (path.includes('//')) return 'an empty segment in the path'
   return null
+}
+
+/** The rules a host a key goes to gets when no rule names it: GET and HEAD
+ *  apply, anything else is held. Named rules replace these entirely, so a
+ *  profile that writes rules for a host decides all of it. */
+export function keyedDefaults(
+  rules: readonly Rule[],
+  keyed: readonly string[],
+): Rule[] {
+  return [...new Set(keyed.map(normal))]
+    .filter((host) => !rules.some((r) => normal(r.host) === host))
+    .flatMap((host): Rule[] => [
+      { host, method: 'GET', effect: 'apply' },
+      { host, method: 'HEAD', effect: 'apply' },
+    ])
 }
 
 /** Whether any rule names `host`, so its requests are decided here. */

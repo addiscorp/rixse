@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test'
 import type { Effect, Rule } from './config'
-import { decide, governs, pathProblem, ruleProblem } from './decide'
+import {
+  decide,
+  governs,
+  keyedDefaults,
+  pathProblem,
+  ruleProblem,
+} from './decide'
 
 const CF = 'api.cloudflare.com'
 const PCT =
@@ -150,4 +156,24 @@ test.each<[Rule, string]>([
 
 test('ordinary rules have no problem', () => {
   for (const r of rules) expect(ruleProblem(r)).toBeNull()
+})
+
+test('a host a key goes to, named by no rule: reads apply, everything else is held', () => {
+  const defaults = keyedDefaults(rules, ['api.stripe.com', CF, '*.github.test'])
+  // CF and *.github.test have rules of their own: no defaults for them.
+  expect(defaults.map((r) => r.host)).toEqual([
+    'api.stripe.com',
+    'api.stripe.com',
+  ])
+  const all = [...rules, ...defaults]
+  const on = (method: string) =>
+    decide(all, { host: 'api.stripe.com', method, path: '/v1/charges' }).effect
+  expect(on('GET')).toBe('apply')
+  expect(on('HEAD')).toBe('apply')
+  expect(on('POST')).toBe('request')
+  expect(on('DELETE')).toBe('request')
+  // Named rules replace the defaults: CF's POST stays what its rules say.
+  expect(decide(all, { host: CF, method: 'DELETE', path: '/x' }).effect).toBe(
+    'request',
+  )
 })

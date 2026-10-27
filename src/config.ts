@@ -7,8 +7,9 @@
 //      exact path over a `/*` prefix of the same length), then a method over
 //      `*`, then an exact host over `*.`; a tie goes to `request`;
 //   3. no matching rule: `request` (held for a person).
-// A host no rule names is not governed, even one a key is swapped in for:
-// its requests pass as the allow-list and the vault let them.
+// A host a key is swapped in for that no rule names gets the defaults:
+// GET and HEAD apply, everything else is held. A host with no key and no
+// rule passes as the allow-list lets it.
 
 /** What one rule says about the calls it matches. */
 export type Effect = 'apply' | 'request' | 'forbidden'
