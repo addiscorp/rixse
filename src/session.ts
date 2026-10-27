@@ -233,7 +233,13 @@ export async function gateway(o: {
   // whichever session claims it first. The answers directory is watched, so
   // `rixse decide` in the person's terminal is seen at once; nothing polls.
   // With an approver, each held request is put to it, and only its word
-  // counts for a yes: an answer file is just the cue to check.
+  // counts for a yes: an answer file is just the cue to check. Which
+  // approval belongs to which request is known only here, in memory, from
+  // this session's own asks: a record on disk (its bytes, its hash, its
+  // approval id) can be written by anything on the host, so it never names
+  // the approval that sends it. A restarted session sends none of the
+  // requests an earlier one held.
+  const askedFor = new Map<string, { approval: string; hash: string }>()
   const ask = async (held: inbox.Held) => {
     try {
       const approval = await o.approver!.ask({
@@ -242,6 +248,8 @@ export async function gateway(o: {
         subject: held.hash,
         text: describe(held),
       })
+      askedFor.set(held.id, { approval, hash: held.hash })
+      // For display (`rixse show`) only.
       inbox.setApproval(o.configDir, held.id, approval)
       emit({ event: 'asked', request: held.id, approval })
     } catch (e) {
@@ -262,15 +270,16 @@ export async function gateway(o: {
    *  there is one, else the answer file. */
   const approvedBy = async (r: inbox.Held): Promise<string | undefined> => {
     if (!o.approver) return inbox.sendable(o.configDir, r)?.by
-    if (!r.approval) return undefined
-    const s = await o.approver.check(r.approval)
+    const mine = askedFor.get(r.id)
+    if (!mine || mine.hash !== r.hash) return undefined
+    const s = await o.approver.check(mine.approval)
     if (s.state === 'waiting') return undefined
     if (s.subject !== r.hash) {
       audit({
         kind: 'gateway',
         event: 'approval for other bytes',
         request: r.id,
-        approval: r.approval,
+        approval: mine.approval,
       })
       return undefined
     }
@@ -278,7 +287,7 @@ export async function gateway(o: {
     // In time, and the approval's one use.
     if (Date.now() - Date.parse(r.at) > inbox.HOLD_MS + inbox.APPROVAL_MS)
       return undefined
-    if (!inbox.claimApproval(o.configDir, r.approval)) return undefined
+    if (!inbox.claimApproval(o.configDir, mine.approval)) return undefined
     return `${s.by} (device ${s.device})`
   }
   const sendIfApproved = async (id: string) => {

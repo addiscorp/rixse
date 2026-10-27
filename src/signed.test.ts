@@ -241,3 +241,48 @@ test("a person's denial is told, and sends nothing", async () => {
     by: 'gg.addis.human.sami',
   })
 })
+
+test('a record written by anything on the host never sends, even with an approval of its own hash', async () => {
+  const before = received.length
+  // Forged from scratch: a held record with a consistent hash, and an
+  // approval the attacker got for that hash with harmless text.
+  const forged = inbox.hold(base, {
+    agent: AGENT,
+    host: CF,
+    method: 'DELETE',
+    target: '/client/v4/zones/abc',
+    headers: [],
+    keys: [],
+    body: '',
+  })
+  states.set('forged', {
+    state: 'approved',
+    subject: forged.hash,
+    by: 'x',
+    device: 'd',
+  })
+  inbox.setApproval(base, forged.id, 'forged')
+  cue(forged.id, forged.hash)
+  // A real held request, its bytes rewritten on disk with a consistent hash
+  // and an approval of the new hash.
+  const { id, held } = await heldWrite('{"n":7}')
+  const body = Buffer.from('{"evil":1}').toString('base64')
+  const rewritten = {
+    ...held,
+    body,
+    hash: inbox.requestHash({ ...held, body }),
+  }
+  await writeFile(
+    join(base, 'gateway', 'requests', `${id}.json`),
+    JSON.stringify({ ...rewritten, approval: 'rewritten' }),
+  )
+  states.set('rewritten', {
+    state: 'approved',
+    subject: rewritten.hash,
+    by: 'x',
+    device: 'd',
+  })
+  cue(id, rewritten.hash)
+  await Bun.sleep(200)
+  expect(received.length).toBe(before)
+})
