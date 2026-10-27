@@ -9,6 +9,24 @@ export { gateway, type GatewaySession } from './session'
 export type { Vault } from './vault'
 export type { Effect, GatewayConfig, Rule } from './config'
 export {
+  decide,
+  governs,
+  pathProblem,
+  ruleProblem,
+  type Call,
+  type Verdict,
+} from './decide'
+export type { GatewayEvent } from './events'
+export {
+  APPROVAL_MS,
+  HOLD_MS,
+  requests,
+  type Answer,
+  type Held,
+  type Status,
+} from './inbox'
+export { gatewayBody } from './intercept'
+export {
   ANTHROPIC,
   PLACEHOLDER,
   anthropicKeyRoute,

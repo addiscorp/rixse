@@ -6,13 +6,18 @@
 // The gateway knows nothing about VMs: a runtime (mirab) maps the guest's
 // egress port to `listen(socketPath)`, installs `caCert` in the guest at
 // `guest.caPath`, and passes `env` to the guest's programs.
+import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import type { Server } from 'node:net'
 import { join } from 'node:path'
 import { stationAuthority } from './ca'
+import type { GatewayConfig } from './config'
 import { auditor, lookupAll, startEgress, type Route } from './egress'
+import { ruleProblem } from './decide'
 import { asker, grants, secretGrants } from './escalations'
-import { domainProblem } from './hosts'
+import { Events, type GatewayEvent } from './events'
+import { allowed, domainProblem } from './hosts'
+import * as inbox from './inbox'
 import { startIntercept, type Intercept, type Upstream } from './intercept'
 import { Placeholders, referencesIn, type Secrets } from './secrets'
 import type { Vault } from './vault'
@@ -32,6 +37,19 @@ export interface GatewaySession {
   /** Serves the VM's way out on `socketPath` (the runtime maps the guest's
    *  egress port to it). */
   listen(socketPath: string): Promise<Server>
+  /** Held, decided, sent, denied: for the runtime to show where the person
+   *  is, and to tell the agent. */
+  events: AsyncIterable<GatewayEvent>
+  /** A person's answer to one of this session's held requests, from where
+   *  they are (the same as `rixse decide`). A yes names the hash of the held
+   *  request the person was shown (its `held` event carries everything), and
+   *  is sent at once. */
+  decide(
+    id: string,
+    decision: 'yes' | 'no',
+    by: string,
+    shown?: string,
+  ): Promise<void>
   close(): Promise<void>
 }
 
@@ -50,9 +68,30 @@ export async function gateway(o: {
   /** The guest's view: the gateway's proxy address there, and where the
    *  runtime puts `caCert`. */
   guest: { proxy: string; caPath: string }
+  /** The profile's `gateway` section: rules, and the key each host's
+   *  approved sends use. */
+  config?: GatewayConfig
   /** Tests point the hosts the gateway opens at a local stand-in. */
   upstream?: (host: string) => Promise<Upstream>
 }): Promise<GatewaySession> {
+  const rules = o.config?.rules ?? []
+  for (const r of rules) {
+    const problem = ruleProblem(r)
+    if (problem) throw new Error(`gateway rule: ${problem}`)
+  }
+  const approvedKeys = o.config?.secrets ?? {}
+  /** The `secrets` entry for `host`: an exact name over a `*.` pattern. */
+  const keysFor = (host: string) => {
+    const hits = Object.entries(approvedKeys).filter(([h]) =>
+      allowed(host, [h]),
+    )
+    return (hits.find(([h]) => !h.startsWith('*.')) ?? hits[0])?.[1]
+  }
+  /** The key an approved send to `host` puts in place of `secret`'s. */
+  const approvedFor = (host: string, secret: string) => {
+    const k = keysFor(host)
+    return k?.approved && k.agent === secret ? k.approved : undefined
+  }
   const text = await readFile(join(o.project, '.env'), 'utf8').catch(() => '')
   const references = referencesIn(text)
   const placeholders = new Placeholders()
@@ -119,15 +158,46 @@ export async function gateway(o: {
     values.set(key, { value: v, until: Date.now() + VALUE_TTL_MS })
     return v
   }
+  // An approved send uses the host's `approved` key in place of the agent's,
+  // and only one the person let this agent use, outside the VM.
+  for (const [host, k] of Object.entries(approvedKeys))
+    if (k.approved && !allowedSecrets.has(k.approved))
+      notes.push(
+        `approved sends to ${host} use harar://${k.approved}, which ${o.agent} hasn't been allowed to use (outside the VM); they won't be sent`,
+      )
+  const approvedValue = (secret: string, host: string) => {
+    const approved = approvedFor(host, secret)
+    if (!approved) return value(secret, host)
+    if (!allowedSecrets.has(approved))
+      return Promise.reject(new Error(`${approved} isn't allowed for ${o.agent}`))
+    return value(approved, host)
+  }
   const audit = auditor(o.zone, o.auditLog)
+  const events = new Events()
+  const emit = (e: GatewayEvent) => {
+    audit({ kind: 'gateway', ...flat(e) })
+    events.emit(e)
+  }
   let intercept: Intercept | undefined
   let authority: Awaited<ReturnType<typeof stationAuthority>> | undefined
-  if (placeholders.size) {
+  if (placeholders.size || rules.length) {
     authority = await stationAuthority(join(o.configDir, 'station-ca'))
     intercept = await startIntercept({
       secrets,
       placeholders,
       value,
+      rules,
+      hold: (r) =>
+        inbox.hold(o.configDir, {
+          ...r,
+          agent: o.agent,
+          keys: r.keys.map((k) => {
+            const approved = approvedFor(r.host, k.secret)
+            return approved ? { ...k, approved } : k
+          }),
+        }),
+      // The intercept audits each request itself; events go to the runtime.
+      emit: (e) => events.emit(e),
       authority,
       audit,
       resolve: lookupAll,
@@ -144,6 +214,40 @@ export async function gateway(o: {
       NODE_EXTRA_CA_CERTS: o.guest.caPath,
     })
   }
+  // Answers: a yes for one of this session's requests is sent once, by
+  // whichever session claims it first. The answers directory is watched, so
+  // `rixse decide` in the person's terminal is seen at once; nothing polls.
+  const sendIfApproved = async (id: string) => {
+    const r = inbox.held(o.configDir, id)
+    if (!r || r.agent !== o.agent || !intercept) return
+    const a = inbox.answer(o.configDir, id)
+    if (a?.decision === 'no' && !seen.has(id)) {
+      seen.add(id)
+      return emit({ event: 'decided', request: id, decision: 'no', by: a.by })
+    }
+    const yes = inbox.sendable(o.configDir, r)
+    if (!yes || !inbox.claim(o.configDir, id)) return
+    emit({ event: 'decided', request: id, decision: 'yes', by: yes.by })
+    const result = await intercept.send(r, approvedValue)
+    const status = result.ok ? result.status : result.reason
+    inbox.markSent(o.configDir, { id, at: new Date().toISOString(), status })
+    emit({
+      event: 'sent',
+      request: id,
+      status,
+      ...(result.ok ? { body: result.body } : {}),
+    })
+  }
+  const seen = new Set<string>()
+  let watcher: FSWatcher | undefined
+  if (intercept && rules.length) {
+    const dir = inbox.answersDir(o.configDir)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    watcher = watch(dir, (_, name) => {
+      const id = String(name ?? '').replace(/\.json$/, '')
+      if (/^r_[0-9a-f]{12}$/.test(id)) void sendIfApproved(id).catch(() => {})
+    })
+  }
   // Escalation: asks recorded sparingly, grants read when they change.
   const asked = asker(o.configDir, o.agent)
   const granted = grants(o.configDir, o.agent)
@@ -151,6 +255,14 @@ export async function gateway(o: {
     env,
     notes,
     caCert: authority?.cert,
+    events,
+    decide: async (id, decision, by, shown) => {
+      const r = inbox.held(o.configDir, id)
+      if (!r || r.agent !== o.agent)
+        throw new Error(`no held request ${id} for ${o.agent}`)
+      inbox.decide(o.configDir, id, decision, by, shown)
+      await sendIfApproved(id)
+    },
     listen: (socketPath) =>
       startEgress({
         socketPath,
@@ -162,6 +274,17 @@ export async function gateway(o: {
         granted,
         asked,
       }),
-    close: async () => intercept?.close(),
+    close: async () => {
+      watcher?.close()
+      events.close()
+      await intercept?.close()
+    },
   }
+}
+
+/** An event as one audit line: the held request by its id and rule, never its bytes. */
+function flat(e: GatewayEvent): Record<string, unknown> {
+  if (e.event !== 'held') return { ...e, body: undefined }
+  const { id, host, method, target, rule, hash } = e.request
+  return { event: 'held', request: id, host, method, target, rule, hash }
 }

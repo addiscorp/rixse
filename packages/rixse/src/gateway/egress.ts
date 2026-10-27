@@ -386,13 +386,15 @@ export async function startEgress(options: EgressOptions): Promise<Server> {
     const port = Number(target[2])
     const entry = { kind: 'connect', host }
     if (port !== TLS_PORT) return refuse(socket, 403, 'only port 443', entry)
-    // A host the station holds keys for is reachable as if whitelisted.
-    const opened = options.intercept?.handles(host) ?? false
-    if (
-      !opened &&
-      !allowed(host, options.allow) &&
-      !allowed(host, options.granted?.() ?? [])
-    ) {
+    // A host the station holds keys for is reachable as if whitelisted; one
+    // the rules govern is opened too, but only when the allow-list lets it.
+    const listed =
+      allowed(host, options.allow) ||
+      allowed(host, options.granted?.() ?? [])
+    const opened =
+      (options.intercept?.handles(host) ?? false) ||
+      (listed && (options.intercept?.governs(host) ?? false))
+    if (!opened && !listed) {
       try {
         options.asked?.(host)
       } catch {
