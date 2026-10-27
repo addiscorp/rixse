@@ -15,7 +15,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkServerIdentity } from 'node:tls'
 import type { StationAuthority } from './ca'
+import type { Rule } from './config'
+import { decide, governs, pathProblem } from './decide'
+import type { GatewayEvent } from './events'
 import { allowed, isPublic } from './hosts'
+import type { Held } from './inbox'
 import { swapHeaders, type Placeholders, type Secrets } from './secrets'
 
 /** Headers that belong to one hop, never passed on. */
@@ -34,6 +38,25 @@ function withoutHop(raw: string[]): string[] {
   for (let i = 0; i + 1 < raw.length; i += 2)
     if (!HOP.has(raw[i].toLowerCase())) out.push(raw[i], raw[i + 1])
   return out
+}
+
+/** A request's whole body, refused past `limit` bytes. */
+function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  return new Promise((done, fail) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > limit) {
+        req.removeAllListeners('data')
+        req.resume()
+        return fail(new Error(`a body over ${limit} bytes can't be held`))
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => done(Buffer.concat(chunks)))
+    req.on('error', fail)
+  })
 }
 
 /** An opened connection with no bytes either way for this long is closed:
@@ -113,6 +136,28 @@ export class Redact extends Transform {
 
 /** How long one request may take, start to finish (a big git push included). */
 const REQUEST_TIMEOUT_MS = 30 * 60_000
+/** The most a held request's body may be: it is kept until a person answers. */
+export const MAX_HELD_BODY = 1 << 20
+/** The most of a sent request's answer kept for the event. */
+const MAX_ANSWER_KEPT = 64 << 10
+
+/** The body the VM gets for a held or forbidden call: never a 2xx, so no
+ *  client mistakes it for done, and JSON naming what happens next. */
+export function gatewayBody(
+  status: 'held' | 'denied',
+  detail: { request?: string; rule?: string },
+) {
+  return JSON.stringify({
+    rixse: {
+      status,
+      ...detail,
+      message:
+        status === 'held'
+          ? "Sent for approval. You'll be told the decision."
+          : "Forbidden by the session's rules; it can't be approved.",
+    },
+  })
+}
 
 export interface Upstream {
   /** The address to dial (already checked) and the port. */
@@ -124,6 +169,13 @@ export interface Upstream {
 
 export interface InterceptOptions {
   secrets: Secrets
+  /** The session's rules: a host any rule names is opened too, and each of
+   *  its requests decided (decide.ts). */
+  rules?: Rule[]
+  /** Keeps a request a rule holds; returns it with its id. */
+  hold?(r: Omit<Held, 'id' | 'at' | 'hash' | 'agent'>): Held
+  /** What happened to a decided request, for the runtime to show. */
+  emit?(e: GatewayEvent): void
   placeholders: Placeholders
   /** A secret's real value for one host (harar's send, through the station's cache). */
   value(secret: string, host: string): Promise<string>
@@ -135,16 +187,30 @@ export interface InterceptOptions {
   upstream?: (host: string) => Promise<Upstream>
 }
 
+/** What a sent held request got back. */
+export type SendResult =
+  | { ok: true; status: number; body: string; used: string[] }
+  | { ok: false; reason: string }
+
 export interface Intercept {
-  /** Whether the station opens tunnels to `host`. */
+  /** Whether the station opens tunnels to `host` (one it holds keys for:
+   *  reachable as if whitelisted). */
   handles(host: string): boolean
+  /** Whether rules decide `host`'s requests (still only reachable when the
+   *  allow-list lets it). */
+  governs(host: string): boolean
+  /** Sends a held request's exact bytes, its placeholders swapped through
+   *  `value` (an approved send may use another key than the agent's). */
+  send(r: Held, value: InterceptOptions['value']): Promise<SendResult>
   /** Takes over a VM connection whose TLS hello (and anything after) is `first`. */
   open(vm: Socket, first: Buffer): void
   close(): Promise<void>
 }
 
 export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
-  const hosts = [...new Set(Object.values(o.secrets).flatMap((s) => s.hosts))]
+  const rules = o.rules ?? []
+  const keyed = [...new Set(Object.values(o.secrets).flatMap((s) => s.hosts))]
+  const hosts = [...new Set([...keyed, ...rules.map((r) => r.host.toLowerCase())])]
   const leaf = await o.authority.leaf(hosts)
   const where = async (host: string): Promise<Upstream> => {
     if (o.upstream) return o.upstream(host)
@@ -156,6 +222,76 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
       if (await reachable(address, 443)) return { address, port: 443 }
     throw new Error('no address answered')
   }
+
+  /** The request as it goes upstream: placeholders swapped, exactly one
+   *  Host, the address checked; or why it can't go. */
+  const prepare = async (
+    host: string,
+    raw: string[],
+    value: InterceptOptions['value'],
+  ): Promise<
+    | { ok: false; status: number; reason: string }
+    | {
+        ok: true
+        upstream: Upstream
+        headers: Record<string, string | string[]>
+        used: string[]
+        revealed: [string, string][]
+      }
+  > => {
+    let swapped
+    try {
+      swapped = await swapHeaders(host, raw, o.placeholders, o.secrets, value)
+    } catch {
+      return { ok: false, status: 502, reason: 'the key could not be read from harar' }
+    }
+    if (!swapped.ok) return { ok: false, status: 403, reason: swapped.reason }
+    let upstream: Upstream
+    try {
+      upstream = await where(host)
+    } catch (e) {
+      return { ok: false, status: 502, reason: (e as Error).message }
+    }
+    // Exactly one Host, the name the VM's TLS asked for; and, where a key went
+    // in, an answer the station can read, so it can take the key back out.
+    const headers: Record<string, string | string[]> = { host }
+    for (let i = 0; i < swapped.headers.length; i += 2) {
+      const name = swapped.headers[i].toLowerCase()
+      const prev = headers[name]
+      headers[name] =
+        prev === undefined
+          ? swapped.headers[i + 1]
+          : ([] as string[]).concat(prev, swapped.headers[i + 1])
+    }
+    if (swapped.revealed.length) headers['accept-encoding'] = 'identity'
+    return {
+      ok: true,
+      upstream,
+      headers,
+      used: swapped.used,
+      revealed: swapped.revealed,
+    }
+  }
+  const requestTo = (
+    host: string,
+    upstream: Upstream,
+    method: string,
+    target: string,
+    headers: Record<string, string | string[]>,
+  ) =>
+    httpsRequest({
+      host: upstream.address,
+      port: upstream.port,
+      servername: host,
+      method,
+      path: target,
+      headers,
+      agent: false,
+      ca: upstream.ca,
+      // The host's own certificate, whatever address it was dialed at.
+      checkServerIdentity: (_, cert) => checkServerIdentity(host, cert),
+      timeout: REQUEST_TIMEOUT_MS,
+    })
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const host = String(
@@ -198,47 +334,68 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
     const raw = withoutHop(req.rawHeaders).filter(
       (_, i, all) => (i % 2 ? all[i - 1] : all[i]).toLowerCase() !== 'host',
     )
-    let swapped
-    try {
-      swapped = await swapHeaders(host, raw, o.placeholders, o.secrets, o.value)
-    } catch {
-      return refuse(502, 'the key could not be read from harar')
+    const method = String(req.method)
+    // A host the rules name: each request is decided before any key is read.
+    if (governs(rules, host)) {
+      const problem = pathProblem(entry.path)
+      if (problem) return refuse(400, problem)
+      const verdict = decide(rules, { host, method, path: entry.path })
+      const reply = (status: number, body: string) => {
+        req.resume()
+        res.writeHead(status, {
+          'content-type': 'application/json',
+          connection: 'close',
+        })
+        res.end(body + '\n')
+      }
+      if (verdict.effect === 'forbidden') {
+        o.audit({ ...entry, rule: verdict.rule, result: 'forbidden' })
+        o.emit?.({
+          event: 'denied',
+          host,
+          method,
+          target,
+          rule: verdict.rule,
+        })
+        return reply(403, gatewayBody('denied', { rule: verdict.rule }))
+      }
+      if (verdict.effect === 'request') {
+        if (!o.hold) return refuse(403, 'held, and nothing here keeps requests')
+        let body: Buffer
+        try {
+          body = await readBody(req, MAX_HELD_BODY)
+        } catch (e) {
+          return refuse(413, (e as Error).message)
+        }
+        const kept = o.hold({
+          host,
+          method,
+          target,
+          headers: raw,
+          body: body.toString('base64'),
+          rule: verdict.rule,
+        })
+        o.audit({
+          ...entry,
+          rule: verdict.rule,
+          request: kept.id,
+          result: 'held',
+        })
+        o.emit?.({ event: 'held', request: kept })
+        return reply(
+          403,
+          gatewayBody('held', { request: kept.id, rule: verdict.rule }),
+        )
+      }
+      Object.assign(entry, { rule: verdict.rule })
     }
-    if (!swapped.ok) return refuse(403, swapped.reason)
-    const revealed = swapped.revealed
-    let upstream: Upstream
-    try {
-      upstream = await where(host)
-    } catch (e) {
-      return refuse(502, (e as Error).message)
-    }
-    // Exactly one Host, the name the VM's TLS asked for; and, where a key went
-    // in, an answer the station can read, so it can take the key back out.
-    const headers: Record<string, string | string[]> = { host }
-    for (let i = 0; i < swapped.headers.length; i += 2) {
-      const name = swapped.headers[i].toLowerCase()
-      const prev = headers[name]
-      headers[name] =
-        prev === undefined
-          ? swapped.headers[i + 1]
-          : ([] as string[]).concat(prev, swapped.headers[i + 1])
-    }
-    if (revealed.length) headers['accept-encoding'] = 'identity'
+    const ready = await prepare(host, raw, o.value)
+    if (!ready.ok) return refuse(ready.status, ready.reason)
+    const { upstream, headers, revealed } = ready
+    const swapped = ready
     let up: ClientRequest
     try {
-      up = httpsRequest({
-        host: upstream.address,
-        port: upstream.port,
-        servername: host,
-        method: req.method,
-        path: target,
-        headers,
-        agent: false,
-        ca: upstream.ca,
-        // The host's own certificate, whatever address it was dialed at.
-        checkServerIdentity: (_, cert) => checkServerIdentity(host, cert),
-        timeout: REQUEST_TIMEOUT_MS,
-      })
+      up = requestTo(host, upstream, method, target, headers)
     } catch (e) {
       return refuse(400, `the request can't be sent: ${(e as Error).message}`)
     }
@@ -311,8 +468,73 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
   const socketPath = join(dir, 's')
   await new Promise<void>((r) => server.listen(socketPath, r))
   const open = new Set<Socket>()
+  const send = async (
+    r: Held,
+    value: InterceptOptions['value'],
+  ): Promise<SendResult> => {
+    const entry = {
+      kind: 'intercept',
+      host: r.host,
+      method: r.method,
+      path: r.target.split('?')[0],
+      request: r.id,
+    }
+    const ready = await prepare(r.host, r.headers, value)
+    if (!ready.ok) {
+      o.audit({ ...entry, result: ready.reason })
+      return { ok: false, reason: ready.reason }
+    }
+    const body = Buffer.from(r.body, 'base64')
+    // The exact bytes held, sent whole: its length as it is now known.
+    delete ready.headers['transfer-encoding']
+    ready.headers['content-length'] = String(body.length)
+    return new Promise<SendResult>((done) => {
+      let up: ClientRequest
+      try {
+        up = requestTo(r.host, ready.upstream, r.method, r.target, ready.headers)
+      } catch (e) {
+        const reason = `the request can't be sent: ${(e as Error).message}`
+        o.audit({ ...entry, result: reason })
+        return done({ ok: false, reason })
+      }
+      up.on('response', (answer) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        answer.on('data', (c: Buffer) => {
+          if (size < MAX_ANSWER_KEPT) chunks.push(c)
+          size += c.length
+        })
+        answer.on('end', () => {
+          const status = answer.statusCode ?? 502
+          const encoding = String(answer.headers['content-encoding'] ?? 'identity')
+          // An answer the gateway can't read for the key isn't passed on.
+          const text =
+            ready.revealed.length && encoding !== 'identity'
+              ? ''
+              : Buffer.concat(chunks).subarray(0, MAX_ANSWER_KEPT).toString('utf8')
+          o.audit({ ...entry, used: ready.used, result: status })
+          done({
+            ok: true,
+            status,
+            body: redactText(text, ready.revealed),
+            used: ready.used,
+          })
+        })
+        answer.on('error', () => done({ ok: false, reason: 'upstream broke off' }))
+      })
+      up.on('timeout', () => up.destroy(new Error('timed out')))
+      up.on('error', (e) => {
+        o.audit({ ...entry, result: `upstream: ${e.message}` })
+        done({ ok: false, reason: `upstream: ${e.message}` })
+      })
+      up.end(body)
+    })
+  }
+
   return {
-    handles: (host) => hosts.some((h) => allowed(host, [h])),
+    handles: (host) => keyed.some((h) => allowed(host, [h])),
+    governs: (host) => governs(rules, host),
+    send,
     open(vm, first) {
       const inner = connect(socketPath)
       open.add(inner)

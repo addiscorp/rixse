@@ -32,6 +32,9 @@
       "default": "./src/index.js"
     }
   },
+  "bin": {
+    "rixse": "./src/gateway/cli.ts"
+  },
   "scripts": {
     "test": "node --test test/*.test.js && tsc -p test/tsconfig.json",
     "test:gateway": "bun test src/gateway && tsc -p src/gateway/tsconfig.json"
