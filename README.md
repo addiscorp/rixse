@@ -28,7 +28,7 @@ const session = await gateway({ agent, project, vault: vault({ socket }), config
 
 | path | what |
 |---|---|
-| `packages/rixse` | the gateway (`import { gateway } from 'rixse'`) and the `rixse` CLI, on Bun |
+| `src/` | the gateway (`import { gateway } from 'rixse'`) and the `rixse` CLI, on Bun |
 | `pack/` | the publish proof for the npm tarball |
 
 `npm test` runs the gateway's tests and typecheck (Bun) and the publish proof.

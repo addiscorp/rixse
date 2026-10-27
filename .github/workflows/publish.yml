@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in rixse; do
-            dir="packages/${pkg}"
+            dir="."
             VERSION="$(node -p "require('./${dir}/package.json').version")"
             ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
             if [ "$ON_REGISTRY" = "$VERSION" ]; then
@@ -80,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in rixse; do
-            VERSION="$(node -p "require('./packages/${pkg}/package.json').version")"
+            VERSION="$(node -p "require('./package.json').version")"
             for attempt in $(seq 1 20); do
               ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
               if [ "$ON_REGISTRY" = "$VERSION" ]; then

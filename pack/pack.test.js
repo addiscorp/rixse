@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const DIR = path.join(ROOT, 'packages/rixse');
+const DIR = ROOT;
 // npm always includes these, even when a `files` whitelist is set.
 const ALWAYS_INCLUDED = ['package.json', 'README.md', 'LICENSE'];
 
