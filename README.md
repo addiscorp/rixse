@@ -15,6 +15,8 @@ const session = await gateway({ agent, project, vault: vault({ socket }), config
   matches is held. A host a key goes to that no rule names gets the safe
   default: reads (GET, HEAD) pass, everything else is held. A host with no
   key and no rule passes as the allow-list lets it.
+  An API that changes things on a GET passes under that default: give such a
+  host its own rules.
 - **Held** calls answer `403` with `{"rixse":{"status":"held","request":"r_…"}}`,
   never a 2xx. `rixse show <id>` shows the whole request, including which header
   gets which key. `rixse decide <id> yes` asks in a terminal, or takes

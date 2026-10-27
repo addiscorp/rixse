@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { checkServerIdentity } from 'node:tls'
 import type { StationAuthority } from './ca'
 import type { Rule } from './config'
-import { decide, governs, pathProblem } from './decide'
+import { decideWith, governs, pathProblem } from './decide'
 import type { GatewayEvent } from './events'
 import { allowed, isPublic } from './hosts'
 import type { Held } from './inbox'
@@ -189,6 +189,8 @@ export interface InterceptOptions {
   /** The session's rules: a host any rule names is opened too, and each of
    *  its requests decided (decide.ts). */
   rules?: Rule[]
+  /** The fallback for hosts a key goes to that no rule governs (decide.ts). */
+  defaults?: Rule[]
   /** Keeps a request a rule holds; returns it with its id. */
   hold?(r: Omit<Held, 'id' | 'at' | 'hash' | 'agent'>): Held
   /** What happened to a decided request, for the runtime to show. */
@@ -226,8 +228,13 @@ export interface Intercept {
 
 export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
   const rules = o.rules ?? []
+  const defaults = o.defaults ?? []
+  const governed = (host: string) =>
+    governs(rules, host) || governs(defaults, host)
   const keyed = [...new Set(Object.values(o.secrets).flatMap((s) => s.hosts))]
-  const hosts = [...new Set([...keyed, ...rules.map((r) => r.host.toLowerCase())])]
+  const hosts = [
+    ...new Set([...keyed, ...rules.map((r) => r.host.toLowerCase())]),
+  ]
   const leaf = await o.authority.leaf(hosts)
   const where = async (host: string): Promise<Upstream> => {
     if (o.upstream) return o.upstream(host)
@@ -260,7 +267,11 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
     try {
       swapped = await swapHeaders(host, raw, o.placeholders, o.secrets, value)
     } catch {
-      return { ok: false, status: 502, reason: 'the key could not be read from harar' }
+      return {
+        ok: false,
+        status: 502,
+        reason: 'the key could not be read from harar',
+      }
     }
     if (!swapped.ok) return { ok: false, status: 403, reason: swapped.reason }
     let upstream: Upstream
@@ -353,7 +364,7 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
     )
     const method = String(req.method)
     // A host the rules name: each request is decided before any key is read.
-    if (governs(rules, host)) {
+    if (governed(host)) {
       const problem = pathProblem(entry.path)
       if (problem) return refuse(400, problem)
       const override = raw.find(
@@ -361,7 +372,11 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
       )
       if (override)
         return refuse(400, `${override} would change what the rules decided`)
-      const verdict = decide(rules, { host, method, path: entry.path })
+      const verdict = decideWith(rules, defaults, {
+        host,
+        method,
+        path: entry.path,
+      })
       const reply = (status: number, body: string) => {
         req.resume()
         res.writeHead(status, {
@@ -532,7 +547,13 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
     return new Promise<SendResult>((done) => {
       let up: ClientRequest
       try {
-        up = requestTo(r.host, ready.upstream, r.method, r.target, ready.headers)
+        up = requestTo(
+          r.host,
+          ready.upstream,
+          r.method,
+          r.target,
+          ready.headers,
+        )
       } catch (e) {
         const reason = `the request can't be sent: ${(e as Error).message}`
         o.audit({ ...entry, result: reason })
@@ -550,7 +571,9 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
         })
         answer.on('end', () => {
           const status = answer.statusCode ?? 502
-          const encoding = String(answer.headers['content-encoding'] ?? 'identity')
+          const encoding = String(
+            answer.headers['content-encoding'] ?? 'identity',
+          )
           // An answer the gateway can't read for the key isn't passed on.
           const text =
             ready.revealed.length && encoding !== 'identity'
@@ -567,7 +590,9 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
             used: ready.used,
           })
         })
-        answer.on('error', () => done({ ok: false, reason: 'upstream broke off' }))
+        answer.on('error', () =>
+          done({ ok: false, reason: 'upstream broke off' }),
+        )
       })
       up.on('timeout', () => up.destroy(new Error('timed out')))
       up.on('error', (e) => {
@@ -580,7 +605,7 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
 
   return {
     handles: (host) => keyed.some((h) => allowed(host, [h])),
-    governs: (host) => governs(rules, host),
+    governs: governed,
     send,
     open(vm, first) {
       const inner = connect(socketPath)

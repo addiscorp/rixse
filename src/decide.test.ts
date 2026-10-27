@@ -3,6 +3,7 @@ import type { Effect, Rule } from './config'
 import {
   decide,
   governs,
+  decideWith,
   keyedDefaults,
   pathProblem,
   ruleProblem,
@@ -158,22 +159,49 @@ test('ordinary rules have no problem', () => {
   for (const r of rules) expect(ruleProblem(r)).toBeNull()
 })
 
-test('a host a key goes to, named by no rule: reads apply, everything else is held', () => {
-  const defaults = keyedDefaults(rules, ['api.stripe.com', CF, '*.github.test'])
-  // CF and *.github.test have rules of their own: no defaults for them.
-  expect(defaults.map((r) => r.host)).toEqual([
-    'api.stripe.com',
-    'api.stripe.com',
-  ])
-  const all = [...rules, ...defaults]
-  const on = (method: string) =>
-    decide(all, { host: 'api.stripe.com', method, path: '/v1/charges' }).effect
-  expect(on('GET')).toBe('apply')
-  expect(on('HEAD')).toBe('apply')
-  expect(on('POST')).toBe('request')
-  expect(on('DELETE')).toBe('request')
-  // Named rules replace the defaults: CF's POST stays what its rules say.
-  expect(decide(all, { host: CF, method: 'DELETE', path: '/x' }).effect).toBe(
-    'request',
-  )
+test('a host a key goes to, governed by no rule: reads apply, everything else is held', () => {
+  const defaults = keyedDefaults(['api.stripe.com', CF, '*.github.test'])
+  const on = (host: string, method: string) =>
+    decideWith(rules, defaults, { host, method, path: '/v1/charges' }).effect
+  expect(on('api.stripe.com', 'GET')).toBe('apply')
+  expect(on('api.stripe.com', 'HEAD')).toBe('apply')
+  expect(on('api.stripe.com', 'POST')).toBe('request')
+  expect(on('api.stripe.com', 'DELETE')).toBe('request')
+  // CF has rules of its own: the defaults never apply to it.
+  expect(
+    decideWith(rules, defaults, { host: CF, method: 'GET', path: '/x' }).effect,
+  ).toBe('request')
+})
+
+test('a host the profile governs by any pattern never gets the defaults', () => {
+  // Named only by a wildcard: GET stays held.
+  const wild: Rule[] = [
+    { host: '*.stripe.com', method: 'GET', effect: 'request' },
+  ]
+  expect(
+    decideWith(wild, keyedDefaults(['api.stripe.com']), {
+      host: 'api.stripe.com',
+      method: 'GET',
+      path: '/',
+    }).effect,
+  ).toBe('request')
+  // The vault names a wildcard, the profile an exact host with `*`: held.
+  const all: Rule[] = [
+    { host: 'api.stripe.com', path: '/*', effect: 'request' },
+  ]
+  expect(
+    decideWith(all, keyedDefaults(['*.stripe.com']), {
+      host: 'api.stripe.com',
+      method: 'GET',
+      path: '/v1',
+    }).effect,
+  ).toBe('request')
+  // ...while a sibling the profile doesn't name gets the defaults.
+  expect(
+    decideWith(all, keyedDefaults(['*.stripe.com']), {
+      host: 'files.stripe.com',
+      method: 'GET',
+      path: '/',
+    }).effect,
+  ).toBe('apply')
 })

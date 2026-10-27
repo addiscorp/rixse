@@ -183,21 +183,16 @@ export async function gateway(o: {
   let intercept: Intercept | undefined
   let authority: Awaited<ReturnType<typeof stationAuthority>> | undefined
   // Every host a key goes to is governed: reads pass, the rest is held,
-  // unless the profile's rules name the host.
-  const effective = [
-    ...rules,
-    ...keyedDefaults(
-      rules,
-      Object.values(secrets).flatMap((s) => s.hosts),
-    ),
-  ]
+  // unless the profile's rules govern the host.
+  const defaults = keyedDefaults(Object.values(secrets).flatMap((s) => s.hosts))
   if (placeholders.size || rules.length) {
     authority = await stationAuthority(join(o.configDir, 'station-ca'))
     intercept = await startIntercept({
       secrets,
       placeholders,
       value,
-      rules: effective,
+      rules,
+      defaults,
       hold: (r) =>
         inbox.hold(o.configDir, {
           ...r,
@@ -251,7 +246,7 @@ export async function gateway(o: {
   }
   const seen = new Set<string>()
   let watcher: FSWatcher | undefined
-  if (intercept && effective.length) {
+  if (intercept && (rules.length || defaults.length)) {
     const dir = inbox.answersDir(o.configDir)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     watcher = watch(dir, (_, name) => {

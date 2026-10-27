@@ -94,19 +94,25 @@ export function pathProblem(path: string): string | null {
   return null
 }
 
-/** The rules a host a key goes to gets when no rule names it: GET and HEAD
- *  apply, anything else is held. Named rules replace these entirely, so a
- *  profile that writes rules for a host decides all of it. */
-export function keyedDefaults(
+/** The rules for hosts a key goes to (exact or `*.` patterns, as the vault
+ *  names them): GET and HEAD apply, anything else is held. They are only a
+ *  fallback: `decideWith` uses them for a host no profile rule governs, by
+ *  any pattern, so a profile that names a host decides all of it. */
+export function keyedDefaults(keyed: readonly string[]): Rule[] {
+  return [...new Set(keyed.map(normal))].flatMap((host): Rule[] => [
+    { host, method: 'GET', effect: 'apply' },
+    { host, method: 'HEAD', effect: 'apply' },
+  ])
+}
+
+/** `decide` with the profile's rules where they govern the host, and the
+ *  defaults only where they don't. */
+export function decideWith(
   rules: readonly Rule[],
-  keyed: readonly string[],
-): Rule[] {
-  return [...new Set(keyed.map(normal))]
-    .filter((host) => !rules.some((r) => normal(r.host) === host))
-    .flatMap((host): Rule[] => [
-      { host, method: 'GET', effect: 'apply' },
-      { host, method: 'HEAD', effect: 'apply' },
-    ])
+  defaults: readonly Rule[],
+  call: Call,
+): Verdict {
+  return decide(governs(rules, call.host) ? rules : defaults, call)
 }
 
 /** Whether any rule names `host`, so its requests are decided here. */
