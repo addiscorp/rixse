@@ -7,6 +7,7 @@
 // a runtime (`import { defineAgent } from 'mirab'`) points the VM at it.
 export { gateway, type GatewaySession } from './session'
 export type { Vault } from './vault'
+export type { ApprovalState, Approver } from './approver'
 export type { Effect, GatewayConfig, Rule } from './config'
 export {
   decide,

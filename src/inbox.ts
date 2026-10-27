@@ -48,6 +48,10 @@ export interface Held {
    *  binds to, and what a person was shown. */
   hash: string
   rule?: string
+  /** The approver's id for this request's approval, when the session has an
+   *  approver: not part of the hash (it comes after), and a yes counts only
+   *  if the approver says that approval signed this hash. */
+  approval?: string
 }
 
 export interface Answer {
@@ -120,6 +124,27 @@ export function answer(configDir: string, id: string): Answer | undefined {
 export function sent(configDir: string, id: string): Sent | undefined {
   if (!ID.test(id)) return undefined
   return readJson<Sent | undefined>(file(configDir, 'sent', id), undefined)
+}
+
+/** Records the approver's id for a held request's approval. */
+export function setApproval(configDir: string, id: string, approval: string) {
+  const r = held(configDir, id)
+  if (!r) return
+  writeJson(file(configDir, 'requests', id), { ...r, approval })
+}
+
+/** Takes the one use of an approval: an approval sends one request, ever,
+ *  even if another held request has the same bytes. */
+export function claimApproval(configDir: string, approval: string): boolean {
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(approval)) return false
+  const dir = join(configDir, 'gateway', 'approvals')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  try {
+    closeSync(openSync(join(dir, `${approval}.claim`), 'wx', 0o600))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Takes the one right to send `id`: true for exactly one caller, in any
