@@ -1,5 +1,5 @@
 // Which hosts a VM may reach, and which addresses are the public internet:
-// shared by the station's tunnels, its routes and the hosts it opens.
+// shared by the gateway's tunnels, its routes and the hosts it opens.
 import { BlockList, isIP } from 'node:net'
 
 /** Whether `host` is on the whitelist: an exact match, or under a `*.` entry. */
@@ -77,4 +77,19 @@ export function isPublic(address: string): boolean {
     return isPublic(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
   }
   return !NOT_PUBLIC_V6.check(canonical, 'ipv6')
+}
+
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+
+/** Why `domain` isn't a host the gateway can open (an exact name, or `*.`
+ *  for any name under one), or null. */
+export function domainProblem(domain: string): string | null {
+  const labels = (domain.startsWith('*.') ? domain.slice(2) : domain).split('.')
+  if (domain.length > 253) return 'is longer than 253 characters'
+  if (labels.length < 2) return 'needs two or more labels, like api.github.com'
+  if (labels.some((label) => !LABEL.test(label)))
+    return 'is lowercase labels of [a-z0-9-], with only a leading *. as a wildcard'
+  // A name's last label starts with a letter; 127.0.0x1 and 1.0x7f are addresses.
+  if (!/^[a-z]/.test(labels.at(-1)!)) return 'is a name, not an address'
+  return null
 }

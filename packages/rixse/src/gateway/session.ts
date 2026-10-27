@@ -1,42 +1,45 @@
-// The station for one VM: its routes, its whitelist and, when the project's
-// .env names harar secrets harar lets go somewhere (a `send` permission, or
-// `harar hosts allow` in a per-user vault), the hosts it opens to swap
-// placeholders for keys. harar decides each send, and records the host. Shared by `mirab spawn --vm` and
-// `mirab dev`, so both give a VM the same way out.
+// One session of the gateway: a VM's only way out. Its allow-list, its model
+// routes and, when the project's .env names secrets the person let this
+// agent use and the vault lets go somewhere, the hosts it opens to swap
+// placeholders for keys. The vault decides each send, and records the host.
+//
+// The gateway knows nothing about VMs: a runtime (mirab) maps the guest's
+// egress port to `listen(socketPath)`, installs `caCert` in the guest at
+// `guest.caPath`, and passes `env` to the guest's programs.
 import { readFile } from 'node:fs/promises'
+import type { Server } from 'node:net'
 import { join } from 'node:path'
-import type { Isolation } from '../isolation/session'
-import { EGRESS_GUEST_PORT, EGRESS_HOST_PORT } from '../isolation/vz'
 import { stationAuthority } from './ca'
-import type { StationConfig } from './config'
 import { auditor, lookupAll, startEgress, type Route } from './egress'
 import { asker, grants, secretGrants } from './escalations'
-import { hararHosts, hararSend } from './harar'
+import { domainProblem } from './hosts'
 import { startIntercept, type Intercept, type Upstream } from './intercept'
-import { domainProblem } from '../agent/define'
 import { Placeholders, referencesIn, type Secrets } from './secrets'
+import type { Vault } from './vault'
 
-/** Where the station's authority lands in the guest. */
-export const GUEST_CA = '/usr/local/share/ca-certificates/mirab-station.crt'
-/** How long a secret's value for a host is kept before harar is asked again. */
+/** How long a secret's value for a host is kept before the vault is asked again. */
 const VALUE_TTL_MS = 60_000
 const MAX_VALUES = 64
-/** The bundle curl, git, Go and OpenSSL programs read. */
-const GUEST_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
 
-export interface VmStation {
-  /** What the guest's programs get: a placeholder per secret, and the station as their proxy. */
+export interface GatewaySession {
+  /** What the guest's programs get: a placeholder per secret, and the gateway as their proxy. */
   env: Record<string, string>
-  /** Things the person should know (a reference harar lets go nowhere). */
+  /** Things the person should know (a reference the vault lets go nowhere). */
   notes: string[]
-  /** Serves the VM's way out, and makes the guest trust the station's authority. */
-  attach(iso: Isolation): Promise<void>
+  /** The gateway's certificate authority (PEM), when it opens HTTPS for
+   *  keys: the guest must trust it, at `guest.caPath`. */
+  caCert?: string
+  /** Serves the VM's way out on `socketPath` (the runtime maps the guest's
+   *  egress port to it). */
+  listen(socketPath: string): Promise<Server>
   close(): Promise<void>
 }
 
-export async function vmStation(o: {
+/** The gateway for one session: `import { gateway } from 'rixse'`. */
+export async function gateway(o: {
   project: string
-  station: StationConfig
+  vault: Vault
+  /** Where the gateway keeps grants, asks and its certificate authority. */
   configDir: string
   zone: string
   auditLog: string
@@ -44,32 +47,31 @@ export async function vmStation(o: {
   allow: string[]
   /** Whose escalations these are: the agent's harar name, or `project:<path>`. */
   agent: string
-  /** Tests point the hosts the station opens at a local stand-in. */
+  /** The guest's view: the gateway's proxy address there, and where the
+   *  runtime puts `caCert`. */
+  guest: { proxy: string; caPath: string }
+  /** Tests point the hosts the gateway opens at a local stand-in. */
   upstream?: (host: string) => Promise<Upstream>
-}): Promise<VmStation> {
+}): Promise<GatewaySession> {
   const text = await readFile(join(o.project, '.env'), 'utf8').catch(() => '')
   const references = referencesIn(text)
   const placeholders = new Placeholders()
   const secrets: Secrets = Object.create(null)
   const env: Record<string, string> = {}
   const notes: string[] = []
-  if (o.station.secrets !== undefined)
-    notes.push(
-      "station.json's secrets are ignored now: harar says where each secret may go (harar hosts allow <secret> <host>, or a role's send at a primary)",
-    )
   // Only the secrets the person let this agent use; then, all at once, where
   // harar lets each go.
   const allowedSecrets = new Set(secretGrants(o.configDir, o.agent))
   const wanted = [...references].filter(([name, secret]) => {
     if (allowedSecrets.has(secret)) return true
     notes.push(
-      `${name} names harar://${secret}, which ${o.agent} hasn't been allowed: mirab secrets allow ${secret} --agent '${o.agent}' (here, never in the VM); the VM doesn't get it`,
+      `${name} names harar://${secret}, which ${o.agent} hasn't been allowed to use (outside the VM); the VM doesn't get it`,
     )
     return false
   })
   const answers = await Promise.all(
     wanted.map(([, secret]) =>
-      hararHosts(o.station.harar.socket, secret).then(
+      o.vault.hosts(secret).then(
         (hosts) => ({ hosts }),
         (e: Error) => ({ error: e.message }),
       ),
@@ -81,17 +83,17 @@ export async function vmStation(o: {
       notes.push(`${name}: ${answer.error}; the VM doesn't get it`)
       return
     }
-    // Only names the station can open; harar holds to the same rule.
+    // Only names the gateway can open; harar holds to the same rule.
     const hosts = answer.hosts.filter(
       (h) => !domainProblem(h.replace(/^\*\./, '')),
     )
     if (hosts.length < answer.hosts.length)
       notes.push(
-        `${name}: harar named hosts the station can't open, left out: ${answer.hosts.filter((h) => !hosts.includes(h)).join(', ')}`,
+        `${name}: the vault named hosts the gateway can't open, left out: ${answer.hosts.filter((h) => !hosts.includes(h)).join(', ')}`,
       )
     if (!hosts.length) {
       notes.push(
-        `${name} names harar://${secret}, which harar lets go nowhere the station can open (harar hosts allow ${secret} <host>, or a role's send at a primary); the VM doesn't get it`,
+        `${name} names harar://${secret}, which the vault lets go nowhere the gateway can open (harar hosts allow ${secret} <host>, or a role's send at a primary); the VM doesn't get it`,
       )
       return
     }
@@ -109,7 +111,7 @@ export async function vmStation(o: {
     if (held && held.until > Date.now()) return held.value
     values.delete(key)
     while (values.size >= MAX_VALUES) values.delete(values.keys().next().value!)
-    const v = hararSend(o.station.harar.socket, secret, host)
+    const v = o.vault.send(secret, host)
     // A failure goes, but only if nothing newer took its place.
     v.catch(() => {
       if (values.get(key)?.value === v) values.delete(key)
@@ -131,7 +133,7 @@ export async function vmStation(o: {
       resolve: lookupAll,
       upstream: o.upstream,
     })
-    const proxy = `http://127.0.0.1:${EGRESS_GUEST_PORT}`
+    const proxy = o.guest.proxy
     Object.assign(env, {
       HTTPS_PROXY: proxy,
       HTTP_PROXY: proxy,
@@ -139,7 +141,7 @@ export async function vmStation(o: {
       http_proxy: proxy,
       NO_PROXY: '127.0.0.1,localhost',
       no_proxy: '127.0.0.1,localhost',
-      NODE_EXTRA_CA_CERTS: GUEST_CA,
+      NODE_EXTRA_CA_CERTS: o.guest.caPath,
     })
   }
   // Escalation: asks recorded sparingly, grants read when they change.
@@ -148,34 +150,18 @@ export async function vmStation(o: {
   return {
     env,
     notes,
-    async attach(iso) {
-      await iso.onGuestConnect!(EGRESS_HOST_PORT, (socketPath) =>
-        startEgress({
-          socketPath,
-          zone: o.zone,
-          allow: o.allow,
-          routes: o.routes,
-          auditLog: o.auditLog,
-          intercept,
-          granted,
-          asked,
-        }),
-      )
-      if (!authority) return
-      await iso.put(GUEST_CA, authority.cert, 0o644)
-      const code = await iso.exec(
-        ['sh', '-c', `cat ${GUEST_CA} >> ${GUEST_BUNDLE}`],
-        {
-          cwd: '/',
-          env: { PATH: '/usr/bin:/bin' },
-          timeoutMs: 10_000,
-          signal: new AbortController().signal,
-          onLine: async () => {},
-        },
-      )
-      if (code !== 0)
-        throw new Error("the VM couldn't be told to trust the station")
-    },
+    caCert: authority?.cert,
+    listen: (socketPath) =>
+      startEgress({
+        socketPath,
+        zone: o.zone,
+        allow: o.allow,
+        routes: o.routes,
+        auditLog: o.auditLog,
+        intercept,
+        granted,
+        asked,
+      }),
     close: async () => intercept?.close(),
   }
 }

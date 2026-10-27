@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { domainProblem } from '../agent/define'
+import { domainProblem } from './hosts'
 
 /** New hosts one agent may ask for per minute; the rest are refused without a record. */
 const ASKS_PER_MINUTE = 10
