@@ -34,6 +34,10 @@ jobs:
       # bench/conformance/pack suites. No install step: every suite runs on
       # relative imports and node builtins only.
       - run: npm test
+      # The gateway runs on Bun: its tests and typecheck gate a release too.
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:gateway -w rixse
 
   publish:
     needs: test
