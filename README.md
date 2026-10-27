@@ -1,46 +1,34 @@
 # rixse
 
-Agentic UI: `ui = view(state)`, and the agent writes state through the same typed actions you do.
+The gateway between an agent's VM, a vault and the internet:
+`effect = gateway(agent(state))`.
 
-Early development. The architecture will be driven by the demos we build.
+```ts
+import { gateway } from 'rixse'   // Bun
+import { vault } from 'harar'
+
+const session = await gateway({ agent, project, vault: vault({ socket }), configDir, config, … })
+```
+
+- **Rules** per host, method and path: `apply`, `request` (held for a person) or
+  `forbidden` (never approvable). On a host any rule names, a request no rule
+  matches is held. A host no rule names is not governed: its requests pass as
+  the allow-list and the vault let them.
+- **Held** calls answer `403` with `{"rixse":{"status":"held","request":"r_…"}}`,
+  never a 2xx. `rixse show <id>` shows the whole request, including which header
+  gets which key. `rixse decide <id> yes` asks in a terminal, or takes
+  `--hash <hash>` from `show`. A yes sends exactly those bytes, once, within 15
+  minutes. `secrets[host].approved` names the key an approved send uses.
+- **What it guarantees, and for whom:** an agent in a VM can't reach the
+  gateway's config directory, so it can't approve its own requests. An agent
+  running on the host as the same OS user can write an answer, so until
+  decisions are signed, the guarantee covers VM agents only.
+
+## Layout
 
 | path | what |
 |---|---|
-| `packages/rixse` | the core (placeholder release `0.0.0` holds the npm name) |
-| `packages/rixse-react` | React hooks: `useRixseState`, `useRixseEvents` |
-| `packages/rixse-swift` | the Swift core, proven against the shared conformance vectors |
-| `demos/canvas` | Next.js demo: chat · canvas · logs, agent on Workers AI |
-| `site/` | rixse.dev (Cloudflare Worker, static assets) |
+| `packages/rixse` | the gateway (`import { gateway } from 'rixse'`) and the `rixse` CLI, on Bun |
+| `pack/` | the publish proof for the npm tarball |
 
-Planned packages: `rixse` (core), `rixse-dom`, `rixse-react`; later `rixse-kotlin`, `rixse-rust`.
-
-## Swift Package Manager
-
-The Swift core is a SwiftPM dependency from the repository root (iOS 17, macOS 14):
-
-```swift
-// Package.swift
-dependencies: [
-  .package(url: "https://github.com/addiscorp/rixse.git", branch: "main"),
-],
-targets: [
-  .target(
-    name: "YourApp",
-    dependencies: [.product(name: "Rixse", package: "rixse")]
-  ),
-]
-```
-
-Then `import Rixse` — `createViewport`, `Store`, `layout` and the rest of the
-core are all in the one library. (Until the first tagged release, depend on
-the branch; a `from:` version replaces it once releases exist.)
-
-## Run the canvas demo
-
-```
-npm install
-CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… npm run demo   # http://localhost:3100
-npm test                                                   # core tests
-```
-
-The AI binding is always remote, so the demo needs Cloudflare credentials that can run Workers AI.
+`npm test` runs the gateway's tests and typecheck (Bun) and the publish proof.

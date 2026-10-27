@@ -1,6 +1,0 @@
-.next/
-.open-next/
-.wrangler/
-next-env.d.ts
-.dev.vars
-tsconfig.tsbuildinfo

@@ -1,7 +1,7 @@
-// Publish proof: the npm tarballs for rixse and rixse-react contain only what
-// each package.json `files` allows (no tests, no demos), and both tarballs
-// install into a scratch project, import every export as ESM, and render one
-// rixse-react component with react-dom/server.
+// Publish proof: the npm tarball for rixse holds only what its package.json
+// `files` allows (no tests), installs into a scratch project, gives the
+// gateway under Bun (and its `rixse` CLI), and says plainly on Node that it
+// runs on Bun.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,129 +10,67 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const PACKAGES = [
-  ['rixse', 'packages/rixse'],
-  ['rixse-react', 'packages/rixse-react'],
-];
+const DIR = path.join(ROOT, 'packages/rixse');
 // npm always includes these, even when a `files` whitelist is set.
 const ALWAYS_INCLUDED = ['package.json', 'README.md', 'LICENSE'];
 
-function isAllowed(pathInTarball, files) {
-  const base = pathInTarball.split('/')[0];
-  if (ALWAYS_INCLUDED.includes(base)) return true;
-  return files.some((entry) => pathInTarball === entry || pathInTarball.startsWith(`${entry}/`));
-}
-
-function packDryRun(name, dir) {
-  const cwd = path.join(ROOT, dir);
-  const out = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd, encoding: 'utf8' });
+function packDryRun() {
+  const out = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: DIR, encoding: 'utf8' });
   const [result] = JSON.parse(out);
-  const pkg = JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+  const pkg = JSON.parse(readFileSync(path.join(DIR, 'package.json'), 'utf8'));
   return { result, pkg };
 }
 
-for (const [name, dir] of PACKAGES) {
-  test(`${name}: tarball contains only what files allows`, () => {
-    const { result, pkg } = packDryRun(name, dir);
-    assert.ok(Array.isArray(pkg.files), `${name} package.json has no files whitelist`);
-    for (const file of result.files) {
-      assert.ok(
-        isAllowed(file.path, pkg.files),
-        `${name} tarball contains "${file.path}", which files does not allow`,
-      );
-      assert.ok(!file.path.includes('test'), `${name} tarball contains a test file: ${file.path}`);
-    }
-    // The entry points the published package advertises must be in the tarball.
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'src/index.js', 'index.d.ts']) {
-      assert.ok(
-        result.files.some((f) => f.path === required),
-        `${name} tarball is missing ${required}`,
-      );
-    }
-  });
-}
-
-// Runs inside the scratch install (below): import every export of both
-// packages as ESM and render one rixse-react component via react-dom/server.
-const CHECK_SOURCE = `
-import assert from 'node:assert/strict';
-import * as rixse from 'rixse/ui';
-import * as bindings from 'rixse-react';
-import { createElement } from 'react';
-import { renderToString } from 'react-dom/server';
-
-const EXPECTED = {
-  rixse: ['createStore', 'defineAction', 'validate', 'Rejected', 'createWire', 'defineComponent', 'defineSource', 'place', 'layout', 'createViewport', 'SIZES', 'PLACES'],
-  'rixse-react': ['useRixseState', 'useRixseEvents', 'nextOrder'],
-};
-const mods = { rixse, 'rixse-react': bindings };
-for (const [name, ns] of Object.entries(mods)) {
-  assert.ok(Object.keys(ns).length > 0, name + ' has no ESM exports');
-  for (const key of Object.keys(ns)) {
-    assert.notEqual(ns[key], undefined, name + '.' + key + ' imported as undefined');
+test('rixse: tarball contains only what files allows', () => {
+  const { result, pkg } = packDryRun();
+  assert.ok(Array.isArray(pkg.files), 'package.json has no files whitelist');
+  const allowed = pkg.files.filter((f) => !f.startsWith('!'));
+  for (const file of result.files) {
+    const ok =
+      ALWAYS_INCLUDED.includes(file.path) ||
+      allowed.some((entry) => file.path === entry || file.path.startsWith(`${entry}/`));
+    assert.ok(ok, `tarball contains "${file.path}", which files does not allow`);
+    assert.ok(!file.path.includes('test'), `tarball contains a test file: ${file.path}`);
+    assert.ok(!file.path.endsWith('tsconfig.json'), `tarball contains ${file.path}`);
   }
-  for (const key of EXPECTED[name]) {
-    assert.ok(key in ns, name + ' is missing export ' + key);
+  // The entry points the published package advertises must be in the tarball.
+  for (const required of ['package.json', 'README.md', 'LICENSE', 'src/index.ts', 'src/node.js', 'src/cli.ts']) {
+    assert.ok(result.files.some((f) => f.path === required), `tarball is missing ${required}`);
   }
-}
-
-const store = rixse.createStore({
-  initial: { count: 0 },
-  actions: [
-    rixse.defineAction('count.increment', {
-      describe: 'Increment the counter',
-      params: {},
-      apply: (state) => ({ ...state, count: state.count + 1 }),
-    }),
-  ],
 });
-store.dispatch({ type: 'count.increment', payload: {} }, 'agent');
-function Counter() {
-  const state = bindings.useRixseState(store);
-  return createElement('span', null, 'count: ' + state.count);
-}
-const html = renderToString(createElement(Counter));
-assert.ok(html.includes('count: 1'), 'rendered html missing store state: ' + html);
-// The bare export is the gateway, which runs on Bun: on Node it says so,
-// pointing at the UI core, rather than failing on a .ts file.
-await assert.rejects(import('rixse'), { message: "rixse's gateway runs on Bun; for the UI core import 'rixse/ui'" });
-console.log('PACK-PROOF-OK');
+
+const ON_NODE = `
+import assert from 'node:assert/strict';
+await assert.rejects(import('rixse'), { message: "rixse runs on Bun: the gateway uses Bun's runtime" });
+console.log('NODE-OK');
+`;
+const ON_BUN = `
+import { gateway, decide, gatewayBody } from 'rixse';
+if (typeof gateway !== 'function') throw new Error('gateway is not a function');
+const v = decide([{ host: 'h.test', method: 'GET', effect: 'apply' }], { host: 'h.test', method: 'POST', path: '/' });
+if (v.effect !== 'request') throw new Error('decide: ' + JSON.stringify(v));
+if (JSON.parse(gatewayBody('held', { request: 'r_1' })).rixse.status !== 'held') throw new Error('gatewayBody');
+console.log('BUN-OK');
 `;
 
-test('packed tarballs install, import every export (ESM), and render with react-dom/server', { timeout: 300000 }, () => {
+test('the packed tarball installs: the gateway and CLI on Bun, a plain error on Node', { timeout: 300000 }, () => {
   const scratch = path.join(ROOT, '.tmp', `pack-proof-${process.pid}`);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(scratch, { recursive: true });
   try {
-    const tarballs = {};
-    for (const [name, dir] of PACKAGES) {
-      const { pkg } = packDryRun(name, dir);
-      execFileSync('npm', ['pack', '--pack-destination', scratch], { cwd: path.join(ROOT, dir), stdio: 'pipe' });
-      tarballs[name] = `${name}-${pkg.version}.tgz`;
-    }
+    const { pkg } = packDryRun();
+    execFileSync('npm', ['pack', '--pack-destination', scratch], { cwd: DIR, stdio: 'pipe' });
     writeFileSync(
       path.join(scratch, 'package.json'),
-      `${JSON.stringify(
-        {
-          name: 'pack-proof',
-          private: true,
-          type: 'module',
-          dependencies: {
-            rixse: `file:./${tarballs['rixse']}`,
-            'rixse-react': `file:./${tarballs['rixse-react']}`,
-            react: '^19',
-            'react-dom': '^19',
-          },
-        },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify({ name: 'pack-proof', private: true, type: 'module', dependencies: { rixse: `file:./rixse-${pkg.version}.tgz` } }, null, 2)}\n`,
     );
     execFileSync('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: scratch, stdio: 'pipe' });
-    writeFileSync(path.join(scratch, 'check.mjs'), CHECK_SOURCE);
-    const out = execFileSync(process.execPath, ['check.mjs'], { cwd: scratch, encoding: 'utf8' });
-    console.log(out.trim());
-    assert.ok(out.includes('PACK-PROOF-OK'), `scratch check did not pass:\n${out}`);
+    writeFileSync(path.join(scratch, 'node.mjs'), ON_NODE);
+    writeFileSync(path.join(scratch, 'bun.ts'), ON_BUN);
+    assert.match(execFileSync(process.execPath, ['node.mjs'], { cwd: scratch, encoding: 'utf8' }), /NODE-OK/);
+    assert.match(execFileSync('bun', ['bun.ts'], { cwd: scratch, encoding: 'utf8' }), /BUN-OK/);
+    const help = execFileSync('bun', ['node_modules/.bin/rixse', 'help'], { cwd: scratch, encoding: 'utf8' });
+    assert.ok(JSON.parse(help).usage.some((u) => u.startsWith('rixse decide')), help);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

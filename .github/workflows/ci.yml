@@ -1,5 +1,5 @@
-# Every pull request: the UI core and site suites (node), and the gateway
-# (bun: its tests and its typecheck).
+# Every pull request: the gateway's tests and typecheck (Bun), and the publish
+# proof for its npm tarball (node).
 name: ci
 
 on:
@@ -18,16 +18,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --no-audit --no-fund
-      - run: npm test
-
-  gateway:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: oven-sh/setup-bun@v2
       - run: npm ci --no-audit --no-fund
-      - run: npm run test:gateway -w rixse
+      - run: npm test

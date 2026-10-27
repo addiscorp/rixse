@@ -1,5 +1,0 @@
-# rixse#9 usability acceptance, on the simulator with Gemma 4: Sami's two
-# steps from the screenshot — a chart, then a question whose answer lands
-# below it. The viewport must bring the newest answer into view itself.
-send top 10 movies by box office
-send Zoe Saldana movies

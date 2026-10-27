@@ -2,17 +2,9 @@
   "name": "rixse-monorepo",
   "private": true,
   "workspaces": [
-    "packages/*",
-    "demos/*"
+    "packages/*"
   ],
   "scripts": {
-    "test": "npm test -w rixse && node --test bench/*.test.js conformance/*.test.js pack/*.test.js",
-    "bench": "node --experimental-strip-types bench/run.mjs && node --experimental-strip-types bench/report.mjs",
-    "demo": "npm run dev -w rixse-demo-canvas",
-    "check-site": "node site/check-site.mjs"
-  },
-  "devDependencies": {
-    "playwright": "1.55.1",
-    "react-server-dom-webpack": "19.2.0"
+    "test": "npm test -w rixse && node --test pack/*.test.js"
   }
 }

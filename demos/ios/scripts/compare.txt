@@ -1,4 +1,0 @@
-# Reproduce the compare-these line rendering: bar, two bars selected, compare.
-send top 10 movies by box office
-tapbars 2
-send compare these over the years
