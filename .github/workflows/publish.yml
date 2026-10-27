@@ -1,18 +1,17 @@
-# Publishes rixse and rixse-react to npm. Manual only: Sami presses
+# Publishes rixse to npm. Manual only: Sami presses
 # "Run workflow" after a release-ready change lands on main.
 #
 # Publishing uses npm trusted publishing (OIDC): the job mints a short-lived
 # token through GitHub's OIDC provider and npm verifies it against the trusted
-# publisher configured on npmjs.com for each package. There is NO NPM_TOKEN
+# publisher configured on npmjs.com for the package. There is NO NPM_TOKEN
 # secret anywhere in this repo, and no --provenance flag (provenance is
 # automatic for a public package published from a public repo via OIDC).
 #
-# The filename is fixed: npm trusted publishing for rixse and rixse-react must
-# be configured against the workflow named `publish.yml` in addiscorp/rixse.
-# Renaming this file breaks the OIDC trust for both packages. Do not rename it.
+# The filename is fixed: npm trusted publishing for rixse must be configured
+# against the workflow named `publish.yml` in addiscorp/rixse. Renaming this
+# file breaks the OIDC trust. Do not rename it.
 #
-# Needs Sami: the npm trusted publisher for rixse and rixse-react must be
-# created on npmjs.com pointing at addiscorp/rixse, this workflow
+# Needs Sami: the npm trusted publisher for rixse must be created on npmjs.com pointing at addiscorp/rixse, this workflow
 # (`publish.yml`), and the `release` environment — publishing fails closed
 # until that exists.
 name: publish
@@ -30,14 +29,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The full gate from package.json: rixse's unit tests plus the root
-      # bench/conformance/pack suites. No install step: every suite runs on
-      # relative imports and node builtins only.
-      - run: npm test
-      # The gateway runs on Bun: its tests and typecheck gate a release too.
+      # The full gate from package.json: the gateway's tests and typecheck
+      # (Bun) and the tarball proof.
       - uses: oven-sh/setup-bun@v2
       - run: npm ci --no-audit --no-fund
-      - run: npm run test:gateway -w rixse
+      - run: npm test
 
   publish:
     needs: test
@@ -62,14 +58,13 @@ jobs:
           npm install -g npm@12
           npm --version
 
-      # Resumable: a prior run can have published one package and failed on
-      # the other. npm refuses to publish over an existing version
+      # Resumable: npm refuses to publish over an existing version
       # (EPUBLISHCONFLICT), so check first and skip instead of failing.
-      - name: Publish rixse and rixse-react
+      - name: Publish rixse
         run: |
           set -euo pipefail
-          for pkg in rixse rixse-react; do
-            dir="packages/${pkg}"
+          for pkg in rixse; do
+            dir="."
             VERSION="$(node -p "require('./${dir}/package.json').version")"
             ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
             if [ "$ON_REGISTRY" = "$VERSION" ]; then
@@ -84,8 +79,8 @@ jobs:
       - name: Verify
         run: |
           set -euo pipefail
-          for pkg in rixse rixse-react; do
-            VERSION="$(node -p "require('./packages/${pkg}/package.json').version")"
+          for pkg in rixse; do
+            VERSION="$(node -p "require('./package.json').version")"
             for attempt in $(seq 1 20); do
               ON_REGISTRY="$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)"
               if [ "$ON_REGISTRY" = "$VERSION" ]; then

@@ -1,6 +1,0 @@
-# The line chart for the axis-tick check (rixse#7): top-10 bars, two selected,
-# compared over the years, then a dump of what the line draws.
-send top 10 movies by box office
-tapbars 2
-send compare these over the years
-linedump

@@ -1,9 +1,0 @@
-{
-  "name": "rixse-demo-canvas",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2026-09-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
-  // Same model and call shape as zega.earth (zegadb/earth lib/ask.ts).
-  "ai": { "binding": "AI", "remote": true }
-}
