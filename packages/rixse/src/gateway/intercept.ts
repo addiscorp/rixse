@@ -20,7 +20,24 @@ import { decide, governs, pathProblem } from './decide'
 import type { GatewayEvent } from './events'
 import { allowed, isPublic } from './hosts'
 import type { Held } from './inbox'
-import { swapHeaders, type Placeholders, type Secrets } from './secrets'
+import {
+  PLACEHOLDER,
+  swapHeaders,
+  type Placeholders,
+  type Secrets,
+} from './secrets'
+
+/** Headers some servers and frameworks read as another method or path than
+ *  the request line's: refused on a governed host, where the request line is
+ *  what the rules decided. */
+const OVERRIDES = new Set([
+  'x-http-method-override',
+  'x-http-method',
+  'x-method-override',
+  'x-original-method',
+  'x-original-url',
+  'x-rewrite-url',
+])
 
 /** Headers that belong to one hop, never passed on. */
 const HOP = new Set([
@@ -339,6 +356,11 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
     if (governs(rules, host)) {
       const problem = pathProblem(entry.path)
       if (problem) return refuse(400, problem)
+      const override = raw.find(
+        (name, i) => i % 2 === 0 && OVERRIDES.has(name.toLowerCase()),
+      )
+      if (override)
+        return refuse(400, `${override} would change what the rules decided`)
       const verdict = decide(rules, { host, method, path: entry.path })
       const reply = (status: number, body: string) => {
         req.resume()
@@ -367,14 +389,33 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
         } catch (e) {
           return refuse(413, (e as Error).message)
         }
-        const kept = o.hold({
-          host,
-          method,
-          target,
-          headers: raw,
-          body: body.toString('base64'),
-          rule: verdict.rule,
-        })
+        // Which header carries which secret's placeholder: shown to the
+        // person, and part of what a yes binds to.
+        const keys: Held['keys'] = []
+        for (let i = 0; i + 1 < raw.length; i += 2) {
+          const value = /^basic\s+([A-Za-z0-9+/=]+)$/i.exec(raw[i + 1])
+          const text = value
+            ? raw[i + 1] + ' ' + Buffer.from(value[1], 'base64').toString()
+            : raw[i + 1]
+          for (const token of new Set(text.match(PLACEHOLDER) ?? [])) {
+            const secret = o.placeholders.secretOf(token)
+            if (secret) keys.push({ header: raw[i], secret })
+          }
+        }
+        let kept: Held
+        try {
+          kept = o.hold({
+            host,
+            method,
+            target,
+            headers: raw,
+            keys,
+            body: body.toString('base64'),
+            rule: verdict.rule,
+          })
+        } catch (e) {
+          return refuse(429, (e as Error).message)
+        }
         o.audit({
           ...entry,
           rule: verdict.rule,
@@ -497,11 +538,14 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
         o.audit({ ...entry, result: reason })
         return done({ ok: false, reason })
       }
+      const longest = Math.max(0, ...ready.revealed.map(([r]) => r.length))
       up.on('response', (answer) => {
         const chunks: Buffer[] = []
         let size = 0
         answer.on('data', (c: Buffer) => {
-          if (size < MAX_ANSWER_KEPT) chunks.push(c)
+          // Kept a little past the cut, so a key across it is taken out
+          // whole before the cut is made.
+          if (size < MAX_ANSWER_KEPT + longest) chunks.push(c)
           size += c.length
         })
         answer.on('end', () => {
@@ -511,12 +555,15 @@ export async function startIntercept(o: InterceptOptions): Promise<Intercept> {
           const text =
             ready.revealed.length && encoding !== 'identity'
               ? ''
-              : Buffer.concat(chunks).subarray(0, MAX_ANSWER_KEPT).toString('utf8')
+              : redactText(
+                  Buffer.concat(chunks).toString('utf8'),
+                  ready.revealed,
+                ).slice(0, MAX_ANSWER_KEPT)
           o.audit({ ...entry, used: ready.used, result: status })
           done({
             ok: true,
             status,
-            body: redactText(text, ready.revealed),
+            body: text,
             used: ready.used,
           })
         })

@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { stationAuthority } from './ca'
 import type { GatewayConfig } from './config'
 import { auditor, lookupAll, startEgress, type Route } from './egress'
+import { ruleProblem } from './decide'
 import { asker, grants, secretGrants } from './escalations'
 import { Events, type GatewayEvent } from './events'
 import { allowed, domainProblem } from './hosts'
@@ -40,8 +41,15 @@ export interface GatewaySession {
    *  is, and to tell the agent. */
   events: AsyncIterable<GatewayEvent>
   /** A person's answer to one of this session's held requests, from where
-   *  they are (the same as `rixse decide`). A yes is sent at once. */
-  decide(id: string, decision: 'yes' | 'no', by: string): Promise<void>
+   *  they are (the same as `rixse decide`). A yes names the hash of the held
+   *  request the person was shown (its `held` event carries everything), and
+   *  is sent at once. */
+  decide(
+    id: string,
+    decision: 'yes' | 'no',
+    by: string,
+    shown?: string,
+  ): Promise<void>
   close(): Promise<void>
 }
 
@@ -67,7 +75,23 @@ export async function gateway(o: {
   upstream?: (host: string) => Promise<Upstream>
 }): Promise<GatewaySession> {
   const rules = o.config?.rules ?? []
+  for (const r of rules) {
+    const problem = ruleProblem(r)
+    if (problem) throw new Error(`gateway rule: ${problem}`)
+  }
   const approvedKeys = o.config?.secrets ?? {}
+  /** The `secrets` entry for `host`: an exact name over a `*.` pattern. */
+  const keysFor = (host: string) => {
+    const hits = Object.entries(approvedKeys).filter(([h]) =>
+      allowed(host, [h]),
+    )
+    return (hits.find(([h]) => !h.startsWith('*.')) ?? hits[0])?.[1]
+  }
+  /** The key an approved send to `host` puts in place of `secret`'s. */
+  const approvedFor = (host: string, secret: string) => {
+    const k = keysFor(host)
+    return k?.approved && k.agent === secret ? k.approved : undefined
+  }
   const text = await readFile(join(o.project, '.env'), 'utf8').catch(() => '')
   const references = referencesIn(text)
   const placeholders = new Placeholders()
@@ -142,11 +166,11 @@ export async function gateway(o: {
         `approved sends to ${host} use harar://${k.approved}, which ${o.agent} hasn't been allowed to use (outside the VM); they won't be sent`,
       )
   const approvedValue = (secret: string, host: string) => {
-    const k = Object.entries(approvedKeys).find(([h]) => allowed(host, [h]))?.[1]
-    if (!k?.approved || k.agent !== secret) return value(secret, host)
-    if (!allowedSecrets.has(k.approved))
-      return Promise.reject(new Error(`${k.approved} isn't allowed for ${o.agent}`))
-    return value(k.approved, host)
+    const approved = approvedFor(host, secret)
+    if (!approved) return value(secret, host)
+    if (!allowedSecrets.has(approved))
+      return Promise.reject(new Error(`${approved} isn't allowed for ${o.agent}`))
+    return value(approved, host)
   }
   const audit = auditor(o.zone, o.auditLog)
   const events = new Events()
@@ -163,7 +187,15 @@ export async function gateway(o: {
       placeholders,
       value,
       rules,
-      hold: (r) => inbox.hold(o.configDir, { ...r, agent: o.agent }),
+      hold: (r) =>
+        inbox.hold(o.configDir, {
+          ...r,
+          agent: o.agent,
+          keys: r.keys.map((k) => {
+            const approved = approvedFor(r.host, k.secret)
+            return approved ? { ...k, approved } : k
+          }),
+        }),
       // The intercept audits each request itself; events go to the runtime.
       emit: (e) => events.emit(e),
       authority,
@@ -224,11 +256,11 @@ export async function gateway(o: {
     notes,
     caCert: authority?.cert,
     events,
-    decide: async (id, decision, by) => {
+    decide: async (id, decision, by, shown) => {
       const r = inbox.held(o.configDir, id)
       if (!r || r.agent !== o.agent)
         throw new Error(`no held request ${id} for ${o.agent}`)
-      inbox.decide(o.configDir, id, decision, by)
+      inbox.decide(o.configDir, id, decision, by, shown)
       await sendIfApproved(id)
     },
     listen: (socketPath) =>

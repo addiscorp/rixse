@@ -28,7 +28,19 @@ test('requests lists what is held, and decide answers it once', async () => {
     host: 'api.cloudflare.com',
     method: 'POST',
     target: '/client/v4/zones/abc/dns_records',
-    headers: ['content-type', 'application/json'],
+    headers: [
+      'content-type',
+      'application/json',
+      'Authorization',
+      'Bearer mirab-ph-0123456789abcdef01234567',
+    ],
+    keys: [
+      {
+        header: 'Authorization',
+        secret: 'personal/cloudflare/DNS_READ',
+        approved: 'personal/cloudflare/DNS_EDIT',
+      },
+    ],
     body: Buffer.from('{}').toString('base64'),
   })
   const list = await rixse('requests', '--config-dir', base)
@@ -45,10 +57,29 @@ test('requests lists what is held, and decide answers it once', async () => {
   })
   expect(row.body).toBeUndefined()
 
+  // show: everything a yes would send, and the hash it binds to.
+  const show = await rixse('show', r.id, '--config-dir', base, '--human')
+  expect(show.code).toBe(0)
+  expect(show.out).toContain(
+    `POST https://api.cloudflare.com/client/v4/zones/abc/dns_records`,
+  )
+  expect(show.out).toContain(
+    'Authorization: Bearer ‹harar://personal/cloudflare/DNS_EDIT›',
+  )
+  expect(show.out).toContain('{}')
+  expect(show.out).toContain(`hash: ${r.hash}`)
+
+  // Not a terminal, and no hash: refused.
+  const blind = await rixse('decide', r.id, 'yes', '--config-dir', base)
+  expect(blind.code).toBe(2)
+  expect(JSON.parse(blind.err).error).toContain('approving needs a terminal')
+
   const yes = await rixse(
     'decide',
     r.id,
     'yes',
+    '--hash',
+    r.hash,
     '--by',
     'gg.addis.human.sami',
     '--config-dir',

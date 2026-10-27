@@ -28,6 +28,10 @@ export type GatewayEvent =
       rule: string
     }
 
+/** Events a reader may fall behind by; past that its oldest are dropped,
+ *  so a reader that stops reading can't grow the gateway without bound. */
+export const MAX_QUEUED = 1000
+
 /** A stream of events for any number of readers; each sees what happens
  *  after it starts reading. Ends when the session closes. */
 export class Events implements AsyncIterable<GatewayEvent> {
@@ -48,6 +52,7 @@ export class Events implements AsyncIterable<GatewayEvent> {
     const queue: (GatewayEvent | undefined)[] = []
     let wake: (() => void) | undefined
     const reader = (e: GatewayEvent | undefined) => {
+      if (e !== undefined && queue.length >= MAX_QUEUED) queue.shift()
       queue.push(e)
       wake?.()
     }

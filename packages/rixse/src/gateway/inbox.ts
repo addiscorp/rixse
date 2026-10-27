@@ -17,6 +17,7 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
+  rmSync,
 } from 'node:fs'
 import { join } from 'node:path'
 import { readJson, writeJson } from './escalations'
@@ -25,6 +26,8 @@ import { readJson, writeJson } from './escalations'
 export const HOLD_MS = 60 * 60_000
 /** How long a yes stays good before the gateway sends. */
 export const APPROVAL_MS = 15 * 60_000
+/** Requests one agent may have waiting at once; past that, the VM is told no. */
+export const MAX_WAITING = 32
 
 export interface Held {
   id: string
@@ -38,7 +41,11 @@ export interface Held {
   headers: string[]
   /** The body, base64. */
   body: string
-  /** sha256 over method, host, target, headers and body: what a yes binds to. */
+  /** Each header carrying a placeholder: the secret the VM's placeholder
+   *  stands for, and the key an approved send puts there instead. */
+  keys: { header: string; secret: string; approved?: string }[]
+  /** sha256 over method, host, target, headers, keys and body: what a yes
+   *  binds to, and what a person was shown. */
   hash: string
   rule?: string
 }
@@ -58,10 +65,12 @@ export interface Sent {
 }
 
 export function requestHash(
-  r: Pick<Held, 'method' | 'host' | 'target' | 'headers' | 'body'>,
+  r: Pick<Held, 'method' | 'host' | 'target' | 'headers' | 'keys' | 'body'>,
 ) {
   return createHash('sha256')
-    .update(JSON.stringify([r.method, r.host, r.target, r.headers, r.body]))
+    .update(
+      JSON.stringify([r.method, r.host, r.target, r.headers, r.keys, r.body]),
+    )
     .digest('hex')
 }
 
@@ -72,12 +81,21 @@ const file = (configDir: string, kind: string, id: string) =>
 export const answersDir = (configDir: string) =>
   join(configDir, 'gateway', 'answers')
 
-/** Holds a request; its id is new and random. */
+/** Holds a request; its id is new and random. Clears the agent's requests
+ *  past any use first, and refuses past MAX_WAITING still waiting. */
 export function hold(
   configDir: string,
   r: Omit<Held, 'id' | 'at' | 'hash'>,
   now = new Date(),
 ): Held {
+  prune(configDir, r.agent, now.getTime())
+  const waiting = requests(configDir, now.getTime()).filter(
+    (q) => q.agent === r.agent && q.status === 'held',
+  ).length
+  if (waiting >= MAX_WAITING)
+    throw new Error(
+      `${waiting} requests are already waiting for a person; answer those first`,
+    )
   const id = `r_${randomBytes(6).toString('hex')}`
   const held: Held = { id, at: now.toISOString(), hash: requestHash(r), ...r }
   writeJson(file(configDir, 'requests', id), held)
@@ -149,16 +167,41 @@ export function requests(configDir: string, now = Date.now()) {
     .sort((a, b) => b.at.localeCompare(a.at))
 }
 
-/** A person's answer to one held request; refused unless it is still waiting. */
+/** Removes `agent`'s requests too old for any answer to send, with their
+ *  answers and marks: the log keeps the record. */
+export function prune(configDir: string, agent: string, now = Date.now()) {
+  for (const r of requests(configDir, now)) {
+    if (r.agent !== agent || now - Date.parse(r.at) <= HOLD_MS + APPROVAL_MS)
+      continue
+    for (const [kind, name] of [
+      ['requests', `${r.id}.json`],
+      ['answers', `${r.id}.json`],
+      ['sent', `${r.id}.json`],
+      ['sent', `${r.id}.claim`],
+    ])
+      rmSync(join(configDir, 'gateway', kind, name), { force: true })
+  }
+}
+
+/**
+ * A person's answer to one held request; refused unless it is still waiting.
+ * A yes names the hash of what the person was shown (`rixse show`), and is
+ * refused if the request is not exactly that.
+ */
 export function decide(
   configDir: string,
   id: string,
   decision: 'yes' | 'no',
   by: string,
+  shown?: string,
   now = new Date(),
 ): Answer {
   const r = held(configDir, id)
   if (!r) throw new Error(`no held request ${id}`)
+  if (decision === 'yes' && shown !== r.hash)
+    throw new Error(
+      `${id} isn't what was shown: approve the hash \`rixse show ${id}\` prints`,
+    )
   const s = status(configDir, r, now.getTime())
   if (s !== 'held') throw new Error(`${id} is ${s}, not waiting for an answer`)
   const a: Answer = { id, hash: r.hash, decision, by, at: now.toISOString() }

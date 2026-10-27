@@ -1,8 +1,10 @@
 import { expect, test } from 'bun:test'
 import type { Effect, Rule } from './config'
-import { decide, governs, pathProblem } from './decide'
+import { decide, governs, pathProblem, ruleProblem } from './decide'
 
 const CF = 'api.cloudflare.com'
+const PCT =
+  'a %, ; or backslash in the path (the host may read it as another path)'
 const rules: Rule[] = [
   { host: CF, method: 'GET', path: '/client/v4/zones/*', effect: 'apply' },
   { host: CF, method: 'POST', path: '/client/v4/zones/*', effect: 'request' },
@@ -61,18 +63,11 @@ test('a host is governed when any rule names it; `*.` never names the apex', () 
 test.each([
   ['/client/v4/zones/../accounts/x', 'a . or .. segment in the path'],
   ['/client/v4/zones/./x', 'a . or .. segment in the path'],
-  [
-    '/client/v4/zones/%2e%2e/accounts',
-    'an encoded dot, slash or a backslash in the path',
-  ],
-  [
-    '/client/v4/zones%2Faccounts',
-    'an encoded dot, slash or a backslash in the path',
-  ],
-  [
-    '/client/v4/zones\\..\\accounts',
-    'an encoded dot, slash or a backslash in the path',
-  ],
+  ['/client/v4/zones/%2e%2e/accounts', PCT],
+  ['/client/v4/zones%2Faccounts', PCT],
+  ['/%61dmin/users', PCT],
+  ['/public/..;/admin', PCT],
+  ['/client/v4/zones\\..\\accounts', PCT],
   ['/client/v4//accounts', 'an empty segment in the path'],
   ['client', 'a path starts with /'],
 ])('a path a host could read differently is refused: %s', (path, problem) => {
@@ -82,4 +77,77 @@ test.each([
 test('an ordinary path has no problem', () => {
   expect(pathProblem('/client/v4/zones/abc/dns_records')).toBeNull()
   expect(pathProblem('/')).toBeNull()
+})
+
+test('the path decides first: a rule about /admin outranks one about every path, whatever the methods', () => {
+  const r: Rule[] = [
+    { host: 'h.test', method: 'GET', path: '/*', effect: 'apply' },
+    { host: 'h.test', path: '/admin/*', effect: 'request' },
+    { host: 'h.test', method: 'GET', path: '/admin/public', effect: 'apply' },
+  ]
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/admin/export' }).effect,
+  ).toBe('request')
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/admin' }).effect,
+  ).toBe('request')
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/admin/public' }).effect,
+  ).toBe('apply')
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/home' }).effect,
+  ).toBe('apply')
+})
+
+test('a /* prefix stops at a segment: /v1/charges/* is not /v1/charges-admin', () => {
+  const r: Rule[] = [
+    { host: 'h.test', method: 'GET', path: '/v1/charges/*', effect: 'apply' },
+  ]
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/v1/charges' }).effect,
+  ).toBe('apply')
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/v1/charges/ch_1' })
+      .effect,
+  ).toBe('apply')
+  expect(
+    decide(r, { host: 'h.test', method: 'GET', path: '/v1/charges-admin' })
+      .effect,
+  ).toBe('request')
+})
+
+test.each<[Rule, string]>([
+  [
+    { host: 'h.test', path: '/v1/charges*', effect: 'apply' },
+    'path /v1/charges* is a path, or one ending in /* for everything under it',
+  ],
+  [
+    { host: 'h.test', path: '/a/*/b', effect: 'apply' },
+    'path /a/*/b is a path, or one ending in /* for everything under it',
+  ],
+  [
+    { host: 'h.test', path: '/a/%2e', effect: 'apply' },
+    'path /a/%2e is a path, or one ending in /* for everything under it',
+  ],
+  [
+    { host: 'localhost', effect: 'apply' },
+    'host localhost needs two or more labels, like api.github.com',
+  ],
+  [
+    { host: 'h.test', method: 'GE T', effect: 'apply' },
+    'method GE T is a method name or *',
+  ],
+  [
+    { host: 'h.test', effect: 'allow' as never },
+    'effect allow is apply, request or forbidden',
+  ],
+])(
+  'a rule that could be misread is refused when the session starts: %#',
+  (rule, problem) => {
+    expect(ruleProblem(rule)).toBe(problem)
+  },
+)
+
+test('ordinary rules have no problem', () => {
+  for (const r of rules) expect(ruleProblem(r)).toBeNull()
 })

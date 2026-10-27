@@ -3,9 +3,10 @@
 //
 // A host named by any rule is governed: each request to it gets the effect
 // of the rules that match it, and one no rule matches is held (`request`).
-// A host no rule names keeps today's behaviour: the allow-list and the key
-// swap decide, and its requests pass.
-import { allowed } from './hosts'
+// A host no rule names is NOT governed, even one a key is swapped in for:
+// the allow-list and the vault decide, and its requests pass unheld. Name a
+// host in a rule to hold its writes.
+import { allowed, domainProblem } from './hosts'
 import type { Effect, Rule } from './config'
 
 export interface Call {
@@ -22,14 +23,36 @@ export type Verdict =
 
 /** How a rule is named in verdicts, the inbox and the log. */
 export const ruleName = (r: Rule) =>
-  `${r.effect} ${(r.method ?? '*').toUpperCase()} ${r.host}${r.path ?? '/*'}`
+  `${r.effect} ${(r.method ?? '*').toUpperCase()} ${r.host.toLowerCase()}${r.path ?? '/*'}`
 
 const normal = (host: string) => host.toLowerCase().replace(/\.$/, '')
 
+/** `/a/*` is `/a` and everything under it, by whole segments (never
+ *  `/ab`); `/*` or none is every path; anything else is that path only. */
 function pathMatches(pattern: string | undefined, path: string) {
-  if (pattern === undefined || pattern === '*') return true
-  if (pattern.endsWith('*')) return path.startsWith(pattern.slice(0, -1))
+  if (pattern === undefined || pattern === '/*') return true
+  if (pattern.endsWith('/*')) {
+    const base = pattern.slice(0, -2)
+    return path === base || path.startsWith(base + '/')
+  }
   return path === pattern
+}
+
+/** Why a rule can't be used, or null: rules are checked when a session starts. */
+export function ruleProblem(r: Rule): string | null {
+  const host = r.host.toLowerCase()
+  const problem = domainProblem(host)
+  if (problem) return `host ${r.host} ${problem}`
+  if (r.method !== undefined && !/^(\*|[A-Z]+)$/.test(r.method.toUpperCase()))
+    return `method ${r.method} is a method name or *`
+  if (r.path !== undefined) {
+    const base = r.path.endsWith('/*') ? r.path.slice(0, -2) : r.path
+    if (r.path !== '/*' && (base.includes('*') || pathProblem(base || '/')))
+      return `path ${r.path} is a path, or one ending in /* for everything under it`
+  }
+  if (!['apply', 'request', 'forbidden'].includes(r.effect))
+    return `effect ${r.effect} is apply, request or forbidden`
+  return null
 }
 
 function matches(r: Rule, call: Call) {
@@ -41,25 +64,29 @@ function matches(r: Rule, call: Call) {
   )
 }
 
-/** Higher is more specific: an exact host over `*.`, a method over `*`, a
- *  longer path, an exact path over a prefix of the same length. */
+/** Higher is more specific. The path decides first (a longer one, then an
+ *  exact path over a prefix of the same length), then a method over `*`,
+ *  then an exact host over `*.`: a rule about `/admin/*` outranks one about
+ *  every path, whatever their methods. */
 function specificity(r: Rule): number {
-  const host = r.host.startsWith('*.') ? 0 : 1
+  const path = r.path ?? '/*'
+  const exact = path.endsWith('/*') ? 0 : 1
+  const length = path.endsWith('/*') ? path.length - 2 : path.length
   const method = (r.method ?? '*') === '*' ? 0 : 1
-  const path = r.path ?? '*'
-  const exact = path.endsWith('*') ? 0 : 1
-  return host * 1e6 + method * 1e5 + path.replace(/\*$/, '').length * 2 + exact
+  const host = r.host.startsWith('*.') ? 0 : 1
+  return (length * 2 + exact) * 4 + method * 2 + host
 }
 
 const RANK: Record<Effect, number> = { forbidden: 2, request: 1, apply: 0 }
 
 /** Why a path on a governed host can't be decided, or null. A host may read
- *  `/a/../b`, `%2e%2e`, an encoded slash or a backslash as another path than
- *  the one a rule saw, so those are refused rather than matched. */
+ *  `/a/../b`, `/%61dmin`, `/a/..;/b` or a backslash as another path than the
+ *  one a rule saw, so any of those is refused rather than matched: no `%`,
+ *  no `;`, no backslash, no `.` or `..` segment, no empty segment. */
 export function pathProblem(path: string): string | null {
   if (!path.startsWith('/')) return 'a path starts with /'
-  if (/%2e|%2f|%5c|\\/i.test(path))
-    return 'an encoded dot, slash or a backslash in the path'
+  if (/[%;\\]/.test(path))
+    return 'a %, ; or backslash in the path (the host may read it as another path)'
   if (path.split('/').some((s) => s === '.' || s === '..'))
     return 'a . or .. segment in the path'
   if (path.includes('//')) return 'an empty segment in the path'

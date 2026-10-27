@@ -63,6 +63,10 @@ beforeAll(async () => {
         auth: req.headers.authorization ?? null,
         body,
       })
+      // A long answer that ends with the key, across the gateway's cut.
+      if (req.url?.endsWith('/pad'))
+        // 'Bearer ' then the key, which starts 5 bytes before the cut.
+        return res.end('x'.repeat(65536 - 12) + req.headers.authorization)
       // A host that echoes the key it got.
       res.setHeader('content-type', 'application/json')
       res.end(
@@ -103,7 +107,11 @@ beforeAll(async () => {
         { host: 'status.example.com', method: 'GET', effect: 'apply' },
         { host: 'nowhere.example.com', method: 'GET', effect: 'apply' },
       ],
-      secrets: { [CF]: { agent: READ, approved: EDIT } },
+      // A wildcard listed first never shadows the exact entry.
+      secrets: {
+        '*.cloudflare.com': { agent: READ, approved: READ },
+        [CF]: { agent: READ, approved: EDIT },
+      },
     },
     upstream: async () => ({ address: '127.0.0.1', port, ca: world.cert }),
   })
@@ -206,8 +214,20 @@ test('a yes sends exactly the held bytes, once, with the approved key', async ()
   const r = await curl([...bearer(), '-X', 'POST', '-d', RECORD, DNS])
   const id = JSON.parse(r.body).rixse.request
   const before = received.length
+  // What the person is shown: which header gets which key on a yes.
+  const shown = inbox.held(base, id)!
+  expect(shown.keys).toEqual([
+    { header: 'Authorization', secret: READ, approved: EDIT },
+  ])
+  // A yes for anything but what was shown is refused.
+  expect(() =>
+    inbox.decide(base, id, 'yes', 'gg.addis.human.sami', 'f'.repeat(64)),
+  ).toThrow("isn't what was shown")
+  expect(() => inbox.decide(base, id, 'yes', 'gg.addis.human.sami')).toThrow(
+    "isn't what was shown",
+  )
   // As `rixse decide` in the person's terminal: a file the session watches.
-  inbox.decide(base, id, 'yes', 'gg.addis.human.sami')
+  inbox.decide(base, id, 'yes', 'gg.addis.human.sami', shown.hash)
   await until(() => events.some((e) => e.event === 'sent' && e.request === id))
   expect(received.length).toBe(before + 1)
   const got = received.at(-1)!
@@ -226,10 +246,10 @@ test('a yes sends exactly the held bytes, once, with the approved key', async ()
     by: 'gg.addis.human.sami',
   })
   // Used once: no second answer, no second send.
-  expect(() => inbox.decide(base, id, 'yes', 'gg.addis.human.sami')).toThrow(
-    'is sent',
-  )
-  await session.decide(id, 'yes', 'x').catch(() => {})
+  expect(() =>
+    inbox.decide(base, id, 'yes', 'gg.addis.human.sami', shown.hash),
+  ).toThrow('is sent')
+  await session.decide(id, 'yes', 'x', shown.hash).catch(() => {})
   // Even a second yes written straight to disk is never sent again.
   const answer = inbox.answer(base, id)!
   await writeFile(
@@ -322,4 +342,45 @@ test('a governed host without a key is opened only when the allow-list lets it',
   expect(listed.status).toBe(200)
   const unlisted = await curl(['https://nowhere.example.com/'])
   expect(unlisted.code).not.toBe(0)
+})
+
+test('a % or ; in the path, or a method or URL override header, is refused before any rule', async () => {
+  const before = received.length
+  for (const path of ['/%61dmin/users', '/client/v4/zones/..;/accounts/1']) {
+    const r = await curl([...bearer(), '--path-as-is', `https://${CF}${path}`])
+    expect(r.status).toBe(400)
+  }
+  for (const header of [
+    'X-HTTP-Method-Override: DELETE',
+    'X-Original-URL: /client/v4/accounts/1',
+  ]) {
+    const r = await curl([...bearer(), '-H', header, DNS])
+    expect(r.status).toBe(400)
+  }
+  expect(received.length).toBe(before)
+})
+
+test('an answer is cut only after the key is taken out of it', async () => {
+  const r = await curl([
+    ...bearer(),
+    '-X',
+    'POST',
+    '-d',
+    '{}',
+    `https://${CF}/client/v4/zones/abc/pad`,
+  ])
+  const id = JSON.parse(r.body).rixse.request
+  await session.decide(
+    id,
+    'yes',
+    'gg.addis.human.sami',
+    inbox.held(base, id)!.hash,
+  )
+  await until(() => events.some((e) => e.event === 'sent' && e.request === id))
+  const sent = events.find((e) => e.event === 'sent' && e.request === id) as {
+    body: string
+  }
+  expect(sent.body.length).toBeLessThanOrEqual(65536)
+  expect(sent.body).not.toContain('cf_E')
+  expect(sent.body.endsWith('Bearer mirab')).toBe(true)
 })
