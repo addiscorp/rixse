@@ -32,6 +32,8 @@ test('rixse: tarball contains only what files allows', () => {
     assert.ok(ok, `tarball contains "${file.path}", which files does not allow`);
     assert.ok(!file.path.includes('test'), `tarball contains a test file: ${file.path}`);
     assert.ok(!file.path.endsWith('tsconfig.json'), `tarball contains ${file.path}`);
+    // A script the tests run as a client: never part of the package.
+    assert.ok(!file.path.endsWith('raw-tls-client.ts'), `tarball contains ${file.path}`);
   }
   // The entry points the published package advertises must be in the tarball.
   for (const required of ['package.json', 'README.md', 'LICENSE', 'src/index.ts', 'src/node.js', 'src/cli.ts']) {
