@@ -93,6 +93,9 @@ function Counter() {
 }
 const html = renderToString(createElement(Counter));
 assert.ok(html.includes('count: 1'), 'rendered html missing store state: ' + html);
+// The bare export is the gateway, which runs on Bun: on Node it says so,
+// pointing at the UI core, rather than failing on a .ts file.
+await assert.rejects(import('rixse'), { message: "rixse's gateway runs on Bun; for the UI core import 'rixse/ui'" });
 console.log('PACK-PROOF-OK');
 `;
 
