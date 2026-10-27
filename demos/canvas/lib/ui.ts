@@ -3,7 +3,7 @@
 // coordinates. Each platform's own layout system does the placing: flexbox and
 // grid on the web, stacks and grids in SwiftUI, Yoga in Ink. An empty layout
 // field means "the platform's default".
-import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse';
+import { createStore, createWire, defineAction, Rejected, type ActionDef } from 'rixse/ui';
 
 export const CONTAINERS = ['stack', 'grid', 'card'] as const;
 // Leaves are shadcn/ui components (plus a few compositions of them); icons are lucide names.

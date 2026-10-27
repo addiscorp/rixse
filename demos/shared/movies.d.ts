@@ -1,8 +1,8 @@
-import type { ActionDef, Item, Size, SourceDef, Store, ViewportState, Wire } from 'rixse';
+import type { ActionDef, Item, Size, SourceDef, Store, ViewportState, Wire } from 'rixse/ui';
 
 export declare const VIEW_KINDS: readonly ['stat', 'bar', 'line', 'pie', 'table', 'graph'];
 export type ViewKind = (typeof VIEW_KINDS)[number];
-export { place } from 'rixse';
+export { place } from 'rixse/ui';
 export declare const FLAGS: readonly ['none', 'drops', 'rises', 'both'];
 export type View = {
   id: string; kind: ViewKind; title: string; query: string; label: string; value: string;

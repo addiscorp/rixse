@@ -1,7 +1,7 @@
 'use client';
 // Chat is conversation. The agent's work lands on the canvas, not here.
 import { useRef, useState, type FormEvent } from 'react';
-import type { Store, Wire } from 'rixse';
+import type { Store, Wire } from 'rixse/ui';
 import { streamAgent, type AgentEvent } from 'rixse-demo-shared/agent';
 import type { Note } from './Logs';
 

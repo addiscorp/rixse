@@ -8,11 +8,11 @@
 # automatic for a public package published from a public repo via OIDC).
 #
 # The filename is fixed: npm trusted publishing for rixse and rixse-react must
-# be configured against the workflow named `publish.yml` in rixsedev/rixse.
+# be configured against the workflow named `publish.yml` in addiscorp/rixse.
 # Renaming this file breaks the OIDC trust for both packages. Do not rename it.
 #
 # Needs Sami: the npm trusted publisher for rixse and rixse-react must be
-# created on npmjs.com pointing at rixsedev/rixse, this workflow
+# created on npmjs.com pointing at addiscorp/rixse, this workflow
 # (`publish.yml`), and the `release` environment — publishing fails closed
 # until that exists.
 name: publish

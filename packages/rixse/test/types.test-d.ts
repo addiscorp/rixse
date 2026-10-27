@@ -2,7 +2,7 @@
 // by `tsc --noEmit`. Lines that must compile stand alone; lines that must NOT
 // compile carry @ts-expect-error — if a loosened type lets one through, tsc
 // fails on the unused directive.
-import { createStore, createViewport, defineAction, defineComponent, defineSource } from 'rixse';
+import { createStore, createViewport, defineAction, defineComponent, defineSource } from 'rixse/ui';
 
 const stat = defineComponent('stat', {
   describe: 'one number',
