@@ -1,5 +1,6 @@
-# Publishes rixse to npm. Manual only: Sami presses
-# "Run workflow" after a release-ready change lands on main.
+# Publishes rixse to npm when a merge to main changes package.json: a new
+# version is published, one already on npm is skipped. "Run workflow" retries
+# by hand.
 #
 # Publishing uses npm trusted publishing (OIDC): the job mints a short-lived
 # token through GitHub's OIDC provider and npm verifies it against the trusted
@@ -17,6 +18,9 @@
 name: publish
 
 on:
+  push:
+    branches: [main]
+    paths: ['package.json']
   workflow_dispatch:
 
 jobs:
