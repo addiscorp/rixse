@@ -39,3 +39,7 @@ const session = await gateway({ agent, project, vault: vault({ socket }), config
 | `pack/` | the publish proof for the npm tarball |
 
 `npm test` runs the gateway's tests and typecheck (Bun) and the publish proof.
+
+## License
+
+[MIT](LICENSE)
