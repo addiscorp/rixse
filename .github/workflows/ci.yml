@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   test:
-    runs-on: mirab-linux-arm64
+    # Temporary (addiscorp/infra#34): [simien] no longer hosts mirab VMs. Back to
+    # a fresh mirab VM, mirab-linux-x64 (APS 11), once x86 mirab VMs have capacity.
+    runs-on: host-linux-x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
